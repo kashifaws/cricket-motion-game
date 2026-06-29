@@ -212,8 +212,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => onDisconnect(socket));
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`[server] Relay server listening on http://localhost:${PORT}`);
-  console.log(`[server] LAN address for phone: http://${LAN_IP}:${PORT}`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`[server] Relay server listening on http://0.0.0.0:${PORT}`);
   console.log(`[server] QR codes will point to: ${MOBILE_BASE_URL}`);
 });
