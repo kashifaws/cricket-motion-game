@@ -202,7 +202,7 @@ let gameRunning = false;
 
 const socket = io(SERVER_URL, {
   query:      { role: 'desktop' },
-  transports: ['websocket'],
+  transports: ['polling', 'websocket'],
 });
 
 socket.on('connect', () => {

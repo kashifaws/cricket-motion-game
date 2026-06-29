@@ -33,7 +33,7 @@ async function boot() {
 
   const socket = io(SERVER_URL, {
     query: { role: 'mobile', room: roomId },
-    transports: ['websocket'],
+    transports: ['polling', 'websocket'],
   });
 
   socket.on('connect', () => {

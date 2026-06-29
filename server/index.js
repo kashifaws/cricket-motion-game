@@ -77,6 +77,7 @@ console.log(`[server] Selected IP for QR: ${LAN_IP}`);
 console.log(`[server] CORS allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
 
 const app = express();
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
