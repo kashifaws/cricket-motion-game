@@ -1,7 +1,7 @@
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 import QRCode from 'qrcode';
 import { networkInterfaces } from 'os';
 import { createRoom, joinRoom, getRoom, findRoomBySocket, deleteRoom } from './rooms.js';
