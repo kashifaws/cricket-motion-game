@@ -81,10 +81,10 @@ app.set('trust proxy', 1);
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
-  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] },
+  cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true, origin: _req.headers.origin, allowedOrigins: ALLOWED_ORIGINS }));
 
 /**
  * Generate a QR code data-URL for a given room ID.
