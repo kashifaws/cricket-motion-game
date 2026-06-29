@@ -22,3 +22,6 @@ Thumbs.db
 
 # Logs
 npm-debug.log*
+
+# Generated output
+graphify-out/
