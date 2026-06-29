@@ -1,0 +1,129 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --bg:          #0a2e0a;   /* spec: full dark green */
+  --surface:     #0f3a0f;
+  --surface-2:   #1a4a1a;
+  --border:      #2d5a2d;
+  --accent:      #4caf50;
+  --accent-dim:  #2e7d32;
+  --text:        #e8f5e9;
+  --text-muted:  #81c784;
+  --power-low:   #4caf50;
+  --power-mid:   #ff9800;
+  --power-high:  #f44336;
+  --radius:      12px;
+  --tap-min:     48px;
+}
+
+/* ── Reset & base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+
+  /* Prevent text selection and long-press callout menus */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#app { height: 100%; }
+
+/* ── Power gauge canvas: centred within its wrapper ────────────────────────── */
+#power-canvas {
+  display: block;
+  width: 280px;
+  height: 280px;
+}
+
+/* ── Shot pills override: 14px font, bright active border ──────────────────── */
+.shot-pill {
+  min-height: var(--tap-min);
+  min-width:  var(--tap-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  border-radius: 999px;   /* fully rounded */
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.shot-pill.active {
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.45);
+}
+
+/* ── Tap target enforcement: every interactive control ─────────────────────── */
+button, [role="button"] {
+  min-height: var(--tap-min);
+  min-width:  var(--tap-min);
+  cursor: pointer;
+  -webkit-appearance: none;
+}
+
+/* ── Quality badge ─────────────────────────────────────────────────────────── */
+.quality-badge {
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  margin-top: 8px;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid currentColor;
+}
+.quality-badge.visible { opacity: 1; }
+.quality-badge.perfect  { color: #ffeb3b; }
+.quality-badge.good     { color: #4caf50; }
+.quality-badge.mistimed { color: #ff9800; }
+.quality-badge.edged    { color: #f44336; }
+
+/* ── Portrait-only: landscape rotation warning ─────────────────────────────── */
+.rotation-warning {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #050f05;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 32px;
+  text-align: center;
+}
+
+.rotation-warning svg {
+  animation: spin-hint 2s ease-in-out infinite;
+}
+
+.rotation-warning p {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 260px;
+}
+
+@keyframes spin-hint {
+  0%  { transform: rotate(0deg);   }
+  30% { transform: rotate(-90deg); }
+  60% { transform: rotate(-90deg); }
+  100%{ transform: rotate(0deg);   }
+}
+
+@media (orientation: landscape) {
+  .rotation-warning { display: flex; }
+}

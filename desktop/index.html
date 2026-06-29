@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cricket Motion — Desktop</title>
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Overlay is visible by default — hidden only after pairing succeeds. -->
+    <div id="qr-overlay">
+      <div class="qr-card">
+        <h2>🏏 Cricket Motion</h2>
+        <!-- QR image hidden until the room is ready -->
+        <img id="qr-img" src="" alt="QR code for mobile controller" class="hidden" />
+        <p class="qr-room">Room</p>
+        <p id="qr-room-id">—</p>
+        <p id="qr-status">Connecting to server…</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
