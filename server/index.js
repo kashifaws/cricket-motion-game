@@ -6,7 +6,7 @@ import QRCode from 'qrcode';
 import { networkInterfaces } from 'os';
 import { createRoom, joinRoom, getRoom, findRoomBySocket, deleteRoom } from './rooms.js';
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 /**
  * Collect all routable LAN IPv4 addresses across every adapter.
