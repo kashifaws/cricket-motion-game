@@ -238,6 +238,13 @@ export class GameEngine {
   // Field
   #fielderMeshes = [];
 
+  // Umpire
+  #umpireMesh = null;
+
+  // Camera views
+  #cameraViews = [];
+  #currentView = 0;
+
   // Animation
   #tweens = new TweenManager();
 
@@ -299,6 +306,8 @@ export class GameEngine {
     this.#buildBatsman();
     this.#buildBatHUD();
     this.#buildFielders();
+    this.#buildUmpire();
+    this.#initCameraViews();
   }
 
   // ── Initialistion ─────────────────────────────────────────────────────────
@@ -322,12 +331,29 @@ export class GameEngine {
   }
 
   #initCamera() {
-    this.#camera = new PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.04, 300);
-    // First-person: eye level at batting crease, looking down the pitch
+    this.#camera = new PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.04, 300);
     this.#camera.position.set(0, 1.55, 4.5);
     this.#camera.lookAt(0, 0.85, -12);
-    // Must be added to scene so we can parent the bat HUD to it
     this.#scene.add(this.#camera);
+  }
+
+  #initCameraViews() {
+    this.#cameraViews = [
+      { name: 'Batsman POV',  pos: [0, 1.55, 4.5],    look: [0, 0.85, -12], batHUD: true  },
+      { name: 'Side On',      pos: [-20, 4, 2],        look: [0, 1.0,   2],  batHUD: false },
+      { name: 'Behind',       pos: [0, 5, 11],         look: [0, 1.0,  -8],  batHUD: false },
+      { name: 'Broadcast',    pos: [14, 10, 22],       look: [0, 2,     0],  batHUD: false },
+    ];
+  }
+
+  /** Cycle to next camera view. Returns the view name. */
+  cycleView() {
+    this.#currentView = (this.#currentView + 1) % this.#cameraViews.length;
+    const v = this.#cameraViews[this.#currentView];
+    this.#camera.position.set(...v.pos);
+    this.#camera.lookAt(...v.look);
+    this.#batHUD.visible = v.batHUD;
+    return v.name;
   }
 
   #initLights() {
@@ -485,50 +511,160 @@ export class GameEngine {
   }
 
   /**
-   * Build the first-person bat-in-hand HUD, parented to the camera so it
-   * stays fixed in the bottom-right of the viewport regardless of camera shake.
+   * First-person bat HUD — curved blade with ridge, aligned toward stumps.
+   * Parented to camera so it stays in view regardless of camera shake.
    */
   #buildBatHUD() {
-    const gripMat   = new MeshLambertMaterial({ color: 0x111111, depthTest: false });
-    const handleMat = new MeshLambertMaterial({ color: 0x8B4513, depthTest: false });
-    const bladeMat  = new MeshLambertMaterial({ color: 0xDEB887, depthTest: false });
-    const edgeMat   = new LineBasicMaterial ({ color: 0x6B3410, depthTest: false });
+    const gripMat   = new MeshLambertMaterial({ color: 0x1a1a1a, depthTest: false });
+    const tapeMat   = new MeshLambertMaterial({ color: 0x5a3e2b, depthTest: false });
+    const handleMat = new MeshLambertMaterial({ color: 0x9B5523, depthTest: false });
+    const bladeMat  = new MeshLambertMaterial({ color: 0xD4A96A, depthTest: false });
+    const ridgeMat  = new MeshLambertMaterial({ color: 0xB8904A, depthTest: false });
+    const edgeMat   = new LineBasicMaterial  ({ color: 0x7A5030, depthTest: false });
 
     this.#batHUD = new Group();
     this.#batHUD.renderOrder = 999;
+    const RO = 999;
 
-    // Grip wrap (top of handle)
-    const grip = new Mesh(new CylinderGeometry(0.03, 0.03, 0.36, 8), gripMat);
-    grip.renderOrder = 999;
+    // Rubber grip
+    const grip = new Mesh(new CylinderGeometry(0.032, 0.030, 0.28, 10), gripMat);
+    grip.renderOrder = RO;
     this.#batHUD.add(grip);
 
-    // Wooden handle below grip
-    const handle = new Mesh(new CylinderGeometry(0.024, 0.027, 0.38, 8), handleMat);
-    handle.position.y = -0.37;
-    handle.renderOrder = 999;
+    // Grip tape rings — give it texture
+    for (let i = 0; i < 4; i++) {
+      const tape = new Mesh(new CylinderGeometry(0.034, 0.034, 0.022, 10), tapeMat);
+      tape.position.y = -0.02 - i * 0.07;
+      tape.renderOrder = RO;
+      this.#batHUD.add(tape);
+    }
+
+    // Wooden handle — tapers slightly toward blade shoulder
+    const handle = new Mesh(new CylinderGeometry(0.022, 0.028, 0.40, 10), handleMat);
+    handle.position.y = -0.38;
+    handle.renderOrder = RO;
     this.#batHUD.add(handle);
 
-    // Blade
-    const blade = new Mesh(new BoxGeometry(0.155, 0.74, 0.055), bladeMat);
-    blade.position.y = -1.01;
-    blade.renderOrder = 999;
-    this.#batHUD.add(blade);
+    // ── Blade in 3 curved sections ──────────────────────────────────────────
+    // Shoulder (narrows toward handle, slight backward lean)
+    const shoulder = new Mesh(new BoxGeometry(0.142, 0.24, 0.046), bladeMat);
+    shoulder.position.set(0, -0.72, -0.004);
+    shoulder.rotation.x =  0.035;
+    shoulder.renderOrder = RO;
+    this.#batHUD.add(shoulder);
 
+    // Swell (widest, thickest — the bow of the bat)
+    const swell = new Mesh(new BoxGeometry(0.155, 0.32, 0.058), bladeMat);
+    swell.position.set(0, -0.99, 0.004);
+    swell.renderOrder = RO;
+    this.#batHUD.add(swell);
+
+    // Toe (tapers toward bottom, slight forward lean)
+    const toe = new Mesh(new BoxGeometry(0.142, 0.22, 0.044), bladeMat);
+    toe.position.set(0, -1.24, -0.003);
+    toe.rotation.x = -0.030;
+    toe.renderOrder = RO;
+    this.#batHUD.add(toe);
+
+    // Spine ridge on back face — defines the bow
+    const ridge = new Mesh(new BoxGeometry(0.058, 0.66, 0.020), ridgeMat);
+    ridge.position.set(0, -0.99, 0.044);
+    ridge.renderOrder = RO;
+    this.#batHUD.add(ridge);
+
+    // Edge outlines around full blade extent
     const bladeEdges = new LineSegments(
-      new EdgesGeometry(new BoxGeometry(0.155, 0.74, 0.055)),
+      new EdgesGeometry(new BoxGeometry(0.155, 0.78, 0.058)),
       edgeMat,
     );
-    bladeEdges.position.copy(blade.position);
+    bladeEdges.position.set(0, -0.99, 0);
     bladeEdges.renderOrder = 1000;
     this.#batHUD.add(bladeEdges);
 
-    // Position bottom-right — z=-2.0 gives enough frustum height to show
-    // grip + handle + most of blade (frustum ±1.45 in Y at this depth)
-    this.#batHUD.position.set(0.52, -0.44, -2.0);
-    this.#batHUD.rotation.set(0.05, 0.18, -0.10);
-    this.#batHUD.scale.setScalar(0.72);
+    // Guard position — bat angled forward toward stumps, right of screen
+    // rotation.x forward-lean shows the blade face; rotation.z gives grip angle
+    this.#batHUD.position.set(0.40, -0.30, -1.80);
+    this.#batHUD.rotation.set(0.20, 0.02, -0.14);
+    this.#batHUD.scale.setScalar(0.75);
 
     this.#camera.add(this.#batHUD);
+  }
+
+  /**
+   * Square-leg umpire with white coat and signal arm.
+   * #umpireMesh is the body — arm rotation is animated by signalUmpire().
+   */
+  #buildUmpire() {
+    const coatMat = new MeshLambertMaterial({ color: 0xf0f0f0 });
+    const skinMat = new MeshLambertMaterial({ color: 0xd4956a });
+    const panMat  = new MeshLambertMaterial({ color: 0x222222 });
+
+    const root = new Group();
+    root.position.set(-3.5, 0, 1.5);  // square leg — slightly behind batting crease
+
+    // Legs / trousers
+    const legs = new Mesh(new BoxGeometry(0.30, 0.55, 0.22), panMat);
+    legs.position.y = 0.28;
+    legs.castShadow = true;
+    root.add(legs);
+
+    // White coat body
+    const body = new Mesh(new CapsuleGeometry(0.22, 0.55, 4, 8), coatMat);
+    body.position.y = 1.05;
+    body.castShadow = true;
+    root.add(body);
+
+    // Head
+    const head = new Mesh(new SphereGeometry(0.16, 10, 7), skinMat);
+    head.position.y = 1.63;
+    head.castShadow = true;
+    root.add(head);
+
+    // White hat
+    const hatBrim = new Mesh(new CylinderGeometry(0.22, 0.22, 0.04, 12), coatMat);
+    hatBrim.position.y = 1.76;
+    root.add(hatBrim);
+    const hatTop = new Mesh(new CylinderGeometry(0.16, 0.16, 0.14, 12), coatMat);
+    hatTop.position.y = 1.84;
+    root.add(hatTop);
+
+    // Signal arm — pivot at shoulder, raised/lowered by signalUmpire()
+    const armPivot = new Group();
+    armPivot.position.set(0.26, 1.28, 0);
+    const arm = new Mesh(new CylinderGeometry(0.06, 0.06, 0.40, 6), coatMat);
+    arm.position.y = -0.20;   // hangs down by default (arm at side)
+    armPivot.add(arm);
+    root.add(armPivot);
+
+    // Face toward pitch (batsman end)
+    root.rotation.y = Math.PI * 0.5;
+
+    this.#umpireMesh = root;
+    this.#umpireMesh.userData.armPivot = armPivot;
+    this.#scene.add(root);
+  }
+
+  /**
+   * Briefly animate the umpire's signal arm then return to rest.
+   * @param {'six'|'four'|'out'|'wide'|'noball'} signal
+   */
+  signalUmpire(signal) {
+    if (!this.#umpireMesh) return;
+    const pivot = this.#umpireMesh.userData.armPivot;
+    const tm    = this.#tweens;
+
+    // Each signal: arm raises to target angle (z rotation from shoulder pivot), holds, returns
+    const signals = {
+      six:    { rz:  Math.PI,       delay: 180 },  // both arms up (use one)
+      four:   { rz: -Math.PI * 0.5, delay: 160 },  // arm extended sideways
+      out:    { rz: -Math.PI * 0.8, delay: 200 },  // arm raised high with finger up
+      wide:   { rz: -Math.PI * 0.5, delay: 160 },
+      noball: { rz: -Math.PI * 0.4, delay: 140 },
+    };
+    const cfg = signals[signal] ?? signals.four;
+
+    tm.to(pivot.rotation, 'z', cfg.rz, 300, 0);
+    tm.to(pivot.rotation, 'z', 0,      350, cfg.delay + 300);
   }
 
   /** Place 8 simple fielder figures at the standard T20 positions. */
@@ -960,20 +1096,24 @@ export class GameEngine {
     const s  = 1 - power / 200;   // 1.0 at power=0 → 0.5 at power=100
 
     // Rest values — must match #buildBatHUD position/rotation
-    const rx0 = 0.05, ry0 = 0.18, rz0 = -0.10;
-    const px0 = 0.52, py0 = -0.44, pz0 = -2.00;
+    const rx0 = 0.20, ry0 = 0.02, rz0 = -0.14;
+    const px0 = 0.40, py0 = -0.30, pz0 = -1.80;
 
     switch (shotType) {
 
       case 'DRIVE': {
-        const b1 = 130*s, b2 = 65*s, b3 = 190*s, ret = 380;
+        // Straight bat: lift back over shoulder → drive down the pitch → high follow-through
+        const b1 = 120*s, b2 = 60*s, b3 = 180*s, ret = 380;
         const p2 = b1, p3 = b1+b2, p4 = b1+b2+b3;
-        tm.to(R,'x',-0.85,b1,0).to(R,'z', 0.05,b1,0).to(R,'y', 0.10,b1,0);
-        tm.to(P,'x', 0.70,b1,0).to(P,'z',-1.72,b1,0);
-        tm.to(R,'x', 1.90,b2,p2).to(R,'z',-0.40,b2,p2);
-        tm.to(P,'x', 0.28,b2,p2).to(P,'z',-2.20,b2,p2).to(P,'y',-0.62,b2,p2);
-        tm.to(R,'x', 2.90,b3,p3).to(R,'y',-0.28,b3,p3).to(R,'z',-0.25,b3,p3);
-        tm.to(P,'y',-0.30,b3,p3).to(P,'x', 0.18,b3,p3);
+        // Wind-up: bat lifts to shoulder height, face opens slightly
+        tm.to(R,'x',-0.70,b1,0).to(R,'y', 0.08,b1,0).to(R,'z',-0.05,b1,0);
+        tm.to(P,'x', 0.55,b1,0).to(P,'y', 0.05,b1,0).to(P,'z',-1.55,b1,0);
+        // Contact: drive through the line, bat face meets ball
+        tm.to(R,'x', 1.60,b2,p2).to(R,'z',-0.28,b2,p2).to(R,'y', 0.00,b2,p2);
+        tm.to(P,'x', 0.32,b2,p2).to(P,'z',-2.10,b2,p2).to(P,'y',-0.45,b2,p2);
+        // Follow-through: bat sweeps high and around
+        tm.to(R,'x', 2.80,b3,p3).to(R,'y',-0.20,b3,p3).to(R,'z',-0.20,b3,p3);
+        tm.to(P,'y',-0.10,b3,p3).to(P,'x', 0.22,b3,p3).to(P,'z',-1.90,b3,p3);
         tm.to(R,'x',rx0,ret,p4).to(R,'y',ry0,ret,p4).to(R,'z',rz0,ret,p4);
         tm.to(P,'x',px0,ret,p4).to(P,'y',py0,ret,p4).to(P,'z',pz0,ret,p4);
         break;
@@ -981,59 +1121,83 @@ export class GameEngine {
 
       case 'SWEEP':
       case 'REVERSE SWEEP': {
+        // Bat goes horizontal: drop low, sweep around the body
         const sign = shotType === 'REVERSE SWEEP' ? -1 : 1;
-        const b1 = 100*s, b2 = 90*s, b3 = 200*s, ret = 380;
+        const b1 = 110*s, b2 = 85*s, b3 = 190*s, ret = 380;
         const p2 = b1, p3 = b1+b2, p4 = b1+b2+b3;
-        tm.to(P,'y',-0.80,b1,0).to(R,'x', 0.30,b1,0).to(R,'z', sign*0.45,b1,0);
-        tm.to(R,'x', 0.12,b2,p2).to(R,'y', sign*1.75,b2,p2).to(P,'x', px0+sign*0.30,b2,p2);
-        tm.to(P,'y',py0,b3,p3).to(R,'y',ry0,b3,p3);
-        tm.to(R,'x',rx0,ret,p4).to(R,'z',rz0,ret,p4).to(P,'x',px0,ret,p4);
+        // Drop bat to knee height
+        tm.to(P,'y',-0.72,b1,0).to(R,'x', 1.55,b1,0).to(R,'z', sign*0.30,b1,0);
+        tm.to(P,'x', px0+sign*0.15,b1,0);
+        // Sweep through horizontal
+        tm.to(R,'x', 1.57,b2,p2).to(R,'y', sign*1.80,b2,p2).to(R,'z', sign*0.10,b2,p2);
+        tm.to(P,'x', px0-sign*0.20,b2,p2).to(P,'y',-0.55,b2,p2);
+        // Follow-through
+        tm.to(R,'y', sign*2.50,b3,p3).to(P,'y',py0+0.10,b3,p3);
+        tm.to(R,'x',rx0,ret,p4).to(R,'y',ry0,ret,p4).to(R,'z',rz0,ret,p4);
+        tm.to(P,'x',px0,ret,p4).to(P,'y',py0,ret,p4).to(P,'z',pz0,ret,p4);
         break;
       }
 
       case 'HOOK': {
-        const b1 = 90*s, b2 = 72*s, b3 = 180*s, ret = 380;
+        // Short ball rising — bat comes up and sweeps across to leg side
+        const b1 = 85*s, b2 = 68*s, b3 = 170*s, ret = 380;
         const p2 = b1, p3 = b1+b2, p4 = b1+b2+b3;
-        tm.to(R,'x', 2.60,b1,0).to(P,'y',-0.22,b1,0).to(P,'x', 0.28,b1,0);
-        tm.to(R,'x', 1.80,b2,p2).to(R,'y',-1.45,b2,p2).to(R,'z',-0.38,b2,p2);
-        tm.to(R,'x', 0.85,b3,p3).to(R,'y',-2.10,b3,p3);
+        // Bat rises high (face to leg side)
+        tm.to(R,'x', 2.40,b1,0).to(R,'y', 0.30,b1,0).to(P,'y', 0.10,b1,0);
+        tm.to(P,'x', 0.30,b1,0).to(P,'z',-1.65,b1,0);
+        // Horizontal hit to leg
+        tm.to(R,'x', 1.70,b2,p2).to(R,'y',-1.30,b2,p2).to(R,'z',-0.30,b2,p2);
+        tm.to(P,'x', 0.18,b2,p2);
+        // Follow-through wraps around
+        tm.to(R,'x', 0.90,b3,p3).to(R,'y',-2.00,b3,p3);
         tm.to(R,'x',rx0,ret,p4).to(R,'y',ry0,ret,p4).to(R,'z',rz0,ret,p4);
-        tm.to(P,'x',px0,ret,p4).to(P,'y',py0,ret,p4);
+        tm.to(P,'x',px0,ret,p4).to(P,'y',py0,ret,p4).to(P,'z',pz0,ret,p4);
         break;
       }
 
       case 'PULL': {
-        const b1 = 100*s, b2 = 78*s, b3 = 185*s, ret = 380;
+        // Short ball — horizontal pull to leg side at waist height
+        const b1 = 95*s, b2 = 72*s, b3 = 175*s, ret = 380;
         const p2 = b1, p3 = b1+b2, p4 = b1+b2+b3;
-        tm.to(R,'x', 2.10,b1,0).to(P,'y',-0.24,b1,0);
-        tm.to(R,'x', 0.78,b2,p2).to(R,'y',-1.05,b2,p2).to(R,'z',-0.28,b2,p2);
-        tm.to(R,'x', 0.35,b3,p3).to(R,'y',-1.70,b3,p3);
+        tm.to(R,'x', 1.90,b1,0).to(R,'y', 0.15,b1,0).to(P,'y',-0.18,b1,0);
+        tm.to(P,'x', 0.55,b1,0).to(P,'z',-1.62,b1,0);
+        // Pull through — bat horizontal, hit to leg
+        tm.to(R,'x', 0.85,b2,p2).to(R,'y',-0.90,b2,p2).to(R,'z',-0.22,b2,p2);
+        tm.to(P,'x', 0.25,b2,p2).to(P,'z',-1.95,b2,p2);
+        // Wrap around body
+        tm.to(R,'x', 0.40,b3,p3).to(R,'y',-1.60,b3,p3);
         tm.to(R,'x',rx0,ret,p4).to(R,'y',ry0,ret,p4).to(R,'z',rz0,ret,p4);
-        tm.to(P,'y',py0,ret,p4);
+        tm.to(P,'x',px0,ret,p4).to(P,'y',py0,ret,p4).to(P,'z',pz0,ret,p4);
         break;
       }
 
       case 'CUT': {
-        const b1 = 100*s, b2 = 85*s, b3 = 195*s, ret = 380;
+        // Short wide ball — horizontal cut to off side
+        const b1 = 95*s, b2 = 80*s, b3 = 185*s, ret = 380;
         const p2 = b1, p3 = b1+b2, p4 = b1+b2+b3;
-        tm.to(R,'x', 1.40,b1,0).to(R,'y', 0.58,b1,0).to(P,'x', 0.80,b1,0);
-        tm.to(R,'x',-0.45,b2,p2).to(R,'y',-0.82,b2,p2).to(R,'z', 0.32,b2,p2);
-        tm.to(P,'x', 0.22,b2,p2);
-        tm.to(R,'x',-0.90,b3,p3).to(R,'y',-0.48,b3,p3);
+        // Lift and open to off side
+        tm.to(R,'x', 1.20,b1,0).to(R,'y', 0.65,b1,0).to(P,'x', 0.72,b1,0);
+        tm.to(P,'z',-1.60,b1,0).to(P,'y',-0.22,b1,0);
+        // Cut through — bat horizontal, hit to off
+        tm.to(R,'x',-0.30,b2,p2).to(R,'y',-0.70,b2,p2).to(R,'z', 0.25,b2,p2);
+        tm.to(P,'x', 0.28,b2,p2).to(P,'z',-2.05,b2,p2);
+        // Follow-through
+        tm.to(R,'x',-0.75,b3,p3).to(R,'y',-0.38,b3,p3);
         tm.to(R,'x',rx0,ret,p4).to(R,'y',ry0,ret,p4).to(R,'z',rz0,ret,p4);
-        tm.to(P,'x',px0,ret,p4);
+        tm.to(P,'x',px0,ret,p4).to(P,'y',py0,ret,p4).to(P,'z',pz0,ret,p4);
         break;
       }
 
       case 'DEFENSIVE':
       default: {
-        const b1 = 155*s, b2 = 145*s, ret = 400;
+        // Straight bat, minimal movement — block the ball
+        const b1 = 140*s, b2 = 130*s, ret = 420;
         const p2 = b1, p3 = b1+b2;
-        tm.to(R,'x', 0.75,b1,0).to(R,'z',-0.02,b1,0);
-        tm.to(P,'z',-2.18,b1,0);
-        tm.to(R,'x', 0.28,b2,p2).to(R,'z',-0.06,b2,p2);
-        tm.to(P,'z',pz0,b2,p2);
-        tm.to(R,'x',rx0,ret,p3).to(R,'z',rz0,ret,p3);
+        tm.to(R,'x', 0.55,b1,0).to(R,'z',-0.10,b1,0).to(R,'y', 0.04,b1,0);
+        tm.to(P,'z',-2.05,b1,0).to(P,'y',-0.38,b1,0);
+        tm.to(R,'x', 0.32,b2,p2).to(R,'z', rz0,b2,p2);
+        tm.to(P,'z',pz0,b2,p2).to(P,'y',py0,b2,p2);
+        tm.to(R,'x',rx0,ret,p3).to(R,'y',ry0,ret,p3).to(R,'z',rz0,ret,p3);
         break;
       }
     }
@@ -1044,8 +1208,8 @@ export class GameEngine {
   updateBatAngle(rBeta, rGamma) {
     if (this.#tweens.busy) return;
     const DEG = MathUtils.DEG2RAD;
-    this.#batHUD.rotation.x = 0.05 + MathUtils.clamp(rBeta  * DEG * 0.7, -Math.PI / 3, Math.PI / 3);
-    this.#batHUD.rotation.z = -0.10 + MathUtils.clamp(rGamma * DEG * 0.5, -Math.PI / 4, Math.PI / 4);
+    this.#batHUD.rotation.x = 0.20 + MathUtils.clamp(rBeta  * DEG * 0.7, -Math.PI / 3, Math.PI / 3);
+    this.#batHUD.rotation.z = -0.14 + MathUtils.clamp(rGamma * DEG * 0.5, -Math.PI / 4, Math.PI / 4);
   }
 
   // ── Power popup sprite ────────────────────────────────────────────────────
@@ -1163,12 +1327,12 @@ export class GameEngine {
   #stepShake() {
     if (this.#shakeFrames <= 0) return;
     const m = this.#shakeMag;
-    this.#batHUD.position.x = 0.52 + (Math.random() - 0.5) * m * 1.2;
-    this.#batHUD.position.y = -0.44 + (Math.random() - 0.5) * m * 0.9;
+    this.#batHUD.position.x = 0.40 + (Math.random() - 0.5) * m * 1.2;
+    this.#batHUD.position.y = -0.30 + (Math.random() - 0.5) * m * 0.9;
     this.#shakeMag    *= 0.78;
     this.#shakeFrames -= 1;
     if (this.#shakeFrames === 0) {
-      this.#batHUD.position.set(0.52, -0.44, -2.0);
+      this.#batHUD.position.set(0.40, -0.30, -1.80);
     }
   }
 

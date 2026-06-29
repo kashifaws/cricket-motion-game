@@ -84,6 +84,68 @@ html, body {
   font-style: italic;
 }
 
+/* ── Over selector ───────────────────────────────────────────────────────────── */
+#over-selector { text-align: center; }
+
+.over-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #81c784;
+  margin-bottom: 8px;
+}
+
+.over-btns {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.over-btn {
+  width: 52px;
+  height: 44px;
+  border-radius: 8px;
+  border: 2px solid rgba(76, 175, 80, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+  color: #c8e6c9;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.over-btn:hover {
+  background: rgba(76, 175, 80, 0.18);
+  border-color: #4caf50;
+  color: #ffffff;
+}
+
+.over-btn.active {
+  background: rgba(76, 175, 80, 0.35);
+  border-color: #4caf50;
+  color: #ffffff;
+}
+
+/* ── Camera view badge ───────────────────────────────────────────────────────── */
+#camera-badge {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(76, 175, 80, 0.4);
+  border-radius: 8px;
+  padding: 6px 14px;
+  color: #a5d6a7;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#camera-badge.visible { opacity: 1; }
+
 /* ── Scorecard overlay — semi-transparent dark panel ─────────────────────────── */
 #scorecard {
   position: fixed;

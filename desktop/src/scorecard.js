@@ -7,11 +7,12 @@
 const LABELS = { dot: '•', single: '1', four: 'FOUR!', six: 'SIX!', wicket: 'BOWLED!' };
 
 export class Scorecard {
-  #runs       = 0;
-  #wickets    = 0;
-  #balls      = 0;
-  #batRuns    = 0;
-  #batBalls   = 0;
+  #runs        = 0;
+  #wickets     = 0;
+  #balls       = 0;
+  #batRuns     = 0;
+  #batBalls    = 0;
+  #totalOvers  = 6;
   #batsmanName = 'Batsman';
   #eventTimer  = null;
 
@@ -75,6 +76,20 @@ export class Scorecard {
   }
 
   /**
+   * Set the total number of overs for the match.
+   * @param {number} overs
+   */
+  setTotalOvers(overs) {
+    this.#totalOvers = overs;
+    this.#elOver.textContent = `0.0 / ${overs}`;
+  }
+
+  /** True when all balls for the match have been bowled. */
+  get matchOver() {
+    return this.#balls >= this.#totalOvers * 6;
+  }
+
+  /**
    * Record a delivery result and refresh all counters.
    * @param {'dot'|'single'|'four'|'six'|'wicket'} event
    */
@@ -93,7 +108,7 @@ export class Scorecard {
     const rem    = this.#balls % 6;
 
     this.#elTotal.textContent        = `${this.#runs}/${this.#wickets}`;
-    this.#elOver.textContent         = `${overs}.${rem}`;
+    this.#elOver.textContent         = `${overs}.${rem} / ${this.#totalOvers}`;
     this.#elBatsmanScore.textContent = `${this.#batRuns} (${this.#batBalls})`;
 
     this.#flash(LABELS[event] ?? event, event);

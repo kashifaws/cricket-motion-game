@@ -13,6 +13,18 @@
     <div id="qr-overlay">
       <div class="qr-card">
         <h2>🏏 Cricket Motion</h2>
+
+        <!-- Over selector — choose match length before scanning -->
+        <div id="over-selector">
+          <p class="over-label">Select overs</p>
+          <div class="over-btns">
+            <button class="over-btn" data-overs="3">3</button>
+            <button class="over-btn active" data-overs="6">6</button>
+            <button class="over-btn" data-overs="10">10</button>
+            <button class="over-btn" data-overs="20">20</button>
+          </div>
+        </div>
+
         <!-- QR image hidden until the room is ready -->
         <img id="qr-img" src="" alt="QR code for mobile controller" class="hidden" />
         <p class="qr-room">Room</p>

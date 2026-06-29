@@ -25,6 +25,35 @@ const qrImg     = /** @type {HTMLImageElement} */  (document.getElementById('qr-
 const roomIdEl  = /** @type {HTMLElement} */       (document.getElementById('qr-room-id'));
 const statusEl  = /** @type {HTMLElement} */       (document.getElementById('qr-status'));
 
+// ── Camera badge ──────────────────────────────────────────────────────────────
+
+const cameraBadge = (() => {
+  const el = document.createElement('div');
+  el.id = 'camera-badge';
+  document.body.appendChild(el);
+  return el;
+})();
+
+let _badgeTimer = null;
+function showCameraBadge(name) {
+  cameraBadge.textContent = `📷 ${name}`;
+  cameraBadge.classList.add('visible');
+  clearTimeout(_badgeTimer);
+  _badgeTimer = setTimeout(() => cameraBadge.classList.remove('visible'), 1800);
+}
+
+// ── Over selector ─────────────────────────────────────────────────────────────
+
+let selectedOvers = 6;
+
+document.querySelectorAll('.over-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.over-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedOvers = parseInt(btn.dataset.overs, 10);
+  });
+});
+
 // ── Sound engine ──────────────────────────────────────────────────────────────
 
 /**
@@ -235,7 +264,9 @@ socket.on('room-created', ({ roomId, qrUrl }) => {
 socket.on('paired', () => {
   qrOverlay.classList.add('hidden');
   scorecard.setBatsman('Player 1');
+  scorecard.setTotalOvers(selectedOvers);
   gameRunning = true;
+  showCameraBadge('Batsman POV');
   setTimeout(startNextDelivery, 1200);
 });
 
@@ -327,14 +358,27 @@ function handleShotResult({ type, direction }) {
   if (type === 'wicket') {
     sounds.stumps();
     showBrief('BOWLED!', '#ff5252', 2200);
+    engine?.signalUmpire('out');
     socket.emit('game-event', { type: 'wicket' });
   } else if (type === 'six') {
+    showBrief('SIX!', '#ffeb3b', 2200);
+    engine?.signalUmpire('six');
     socket.emit('game-event', { type: 'six' });
+    sounds.six();
   } else if (type === 'four') {
     showBrief('FOUR!', '#ffab40', 1600);
+    engine?.signalUmpire('four');
   }
 
   if (!gameRunning) return;
+
+  // Match over when all overs are bowled
+  if (scorecard.matchOver) {
+    gameRunning = false;
+    showBrief('INNINGS OVER!', '#4caf50', 4000);
+    return;
+  }
+
   const delay = type === 'wicket' ? 3000 : 1800;
   setTimeout(startNextDelivery, delay);
 }
@@ -344,9 +388,14 @@ function startNextDelivery() {
   engine.deliveryStart(bowlerAI.nextDeliveryType(), bowlerAI.lineOffset);
 }
 
-// ── Dev keyboard shortcuts ────────────────────────────────────────────────────
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
 window.addEventListener('keydown', (e) => {
+  // V — cycle camera view
+  if (e.key === 'v' || e.key === 'V') {
+    if (engine) showCameraBadge(engine.cycleView());
+  }
+
   if (e.key === 's' || e.key === 'S') {
     // Simulate a medium-power straight drive
     if (engine) {
