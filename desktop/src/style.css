@@ -84,6 +84,41 @@ html, body {
   font-style: italic;
 }
 
+/* ── Handedness selector ─────────────────────────────────────────────────────── */
+#hand-selector { text-align: center; margin-bottom: 12px; }
+
+.hand-btns {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.hand-btn {
+  flex: 1;
+  max-width: 110px;
+  height: 44px;
+  border-radius: 8px;
+  border: 2px solid rgba(255, 179, 0, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffe082;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.hand-btn:hover {
+  background: rgba(255, 179, 0, 0.18);
+  border-color: #ffb300;
+  color: #ffffff;
+}
+
+.hand-btn.active {
+  background: rgba(255, 179, 0, 0.35);
+  border-color: #ffb300;
+  color: #ffffff;
+}
+
 /* ── Over selector ───────────────────────────────────────────────────────────── */
 #over-selector { text-align: center; }
 

@@ -209,6 +209,7 @@ io.on('connection', (socket) => {
   socket.on('orientation',   (data) => onRelay(socket, 'orientation',   data));
   // Desktop → mobile
   socket.on('game-event',    (data) => onRelay(socket, 'game-event',    data));
+  socket.on('handedness',    (data) => onRelay(socket, 'handedness',    data));
   socket.on('disconnect', () => onDisconnect(socket));
 });
 

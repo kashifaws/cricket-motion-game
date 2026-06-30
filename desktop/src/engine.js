@@ -245,6 +245,12 @@ export class GameEngine {
   // Frame-to-frame delta tracking (seconds) for stadium / umpireAnim updates
   #lastNow = 0;
 
+  // Handedness — affects dirX mirroring in #calcDirection
+  #handedness = 'right';
+
+  // Pending delivery-reset timer (cancel if new delivery starts before it fires)
+  #resetTimer = null;
+
   // Animation
   #tweens = new TweenManager();
 
@@ -508,7 +514,19 @@ export class GameEngine {
 
   // ── Delivery ──────────────────────────────────────────────────────────────
 
+  /** @param {'right'|'left'} hand */
+  setHandedness(hand) {
+    this.#handedness = hand;
+  }
+
   deliveryStart(type = 'pace', lineOffset = 0) {
+    // Force-resolve any in-flight shot — prevents state getting stuck when the
+    // next-delivery timer fires before the shot animation finishes.
+    if (this.#state === 'SHOT_PLAYING') {
+      this.#ballMesh.visible = false;
+      this.#state = 'IDLE';
+    }
+    clearTimeout(this.#resetTimer);
     if (this.#state !== 'IDLE') return;
 
     this.#pendingType       = type;
@@ -653,7 +671,8 @@ export class GameEngine {
 
     this.#shotCurve      = new CatmullRomCurve3([startPos, mid1, mid2, end]);
     this.#shotStartMs    = performance.now();
-    this.#shotDurationMs = Math.max(400, 700 + distance * 28 - power * 2);
+    // Cap at 1400 ms so the next delivery timer (2000 ms) always fires after reset
+    this.#shotDurationMs = Math.min(1400, Math.max(400, 700 + distance * 28 - power * 2));
     this.#state          = 'SHOT_PLAYING';
 
     return this.#scoreShot(finalX, finalZ, arcMax, isLoft, !!fielder, power);
@@ -668,12 +687,15 @@ export class GameEngine {
   #calcDirection(timestamp, alpha, gamma, shotType) {
     const timingOffset = timestamp - this.#hitWindow.arrivalTime;
 
-    // Timing → lateral direction: early = leg side, late = off side
+    // Timing → lateral direction: early = leg side, late = off side (for RH batsman)
     let dirX = MathUtils.clamp(timingOffset / TIMING_LATE, -1, 1);
 
-    // Phone gamma fine-tunes: tilt left = leg, tilt right = off
+    // Phone gamma fine-tunes: tilt right = off side for RH
     const gammaAdj = MathUtils.clamp((gamma ?? 0) / 40, -0.4, 0.4);
     dirX = MathUtils.clamp(dirX + gammaAdj * 0.25, -1, 1);
+
+    // Left-handers: mirror lateral axis (their off-side is world-negative X)
+    if (this.#handedness === 'left') dirX = -dirX;
 
     // Z (forward weight) depends on shot type
     let dirZ;
@@ -1127,10 +1149,11 @@ export class GameEngine {
     this.#swingDetected  = false;
     this.#hitWindow.open = false;
     clearTimeout(this.#windowTimer);
-    setTimeout(() => {
+    clearTimeout(this.#resetTimer);
+    this.#resetTimer = setTimeout(() => {
       this.#ballMesh.visible = false;
       this.#bowlerFigure.setBowlingStance();
-      this.#bowlerFigure.group.position.z = BOWLER_START_Z;  // override stance default
+      this.#bowlerFigure.group.position.z = BOWLER_START_Z;
     }, 300);
   }
 }

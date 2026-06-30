@@ -7,11 +7,12 @@ const _raw = { alpha: 0, beta: 0, gamma: 0 };
 
 // Calibration baseline
 const _baseline = { alpha: 0, beta: 0, gamma: 0 };
-let _calibrated = true;   // start calibrated (baseline=0); user can recalibrate for better shot classification
-let _listening = false;
-let _socket = null;
-let _debugCb  = null;   // (mag, state, sent, calls) → void
-let _callCount = 0;
+let _calibrated  = true;   // start calibrated; user can recalibrate
+let _handedness  = 'right'; // 'right' | 'left'
+let _listening   = false;
+let _socket      = null;
+let _debugCb     = null;   // (mag, state, sent, calls) → void
+let _callCount   = 0;
 
 // ── State machine ────────────────────────────────────────────────────────────
 
@@ -30,6 +31,15 @@ let _consecutiveHigh = 0;
  */
 /** Register a callback that receives live { mag, state, sent, calls } for the debug bar. */
 export function setDebugCallback(cb) { _debugCb = cb; }
+
+/**
+ * Set batting handedness. Received from desktop on pairing.
+ * @param {'right'|'left'} hand
+ */
+export function setHandedness(hand) {
+  _handedness = hand === 'left' ? 'left' : 'right';
+  console.log('[motion] handedness →', _handedness);
+}
 
 /**
  * Fire a synthetic swing (swipe fallback or tap button).
@@ -94,22 +104,65 @@ export function calculatePower(peakMagnitude) {
 }
 
 /**
- * Classify shot type from relative orientation angles and power.
- * @param {number} rAlpha
- * @param {number} rGamma
- * @param {number} rBeta
- * @param {number} power
+ * Classify shot type from the TRAJECTORY of the swing, not just static orientation.
+ *
+ * Physics of how the player holds the phone:
+ *   Portrait, screen toward body, held like a bat handle.
+ *   ax: positive = phone moves RIGHT  (off side for right-hander)
+ *   ay: positive = phone moves UP     (hook/pull territory)
+ *   az: negative = phone moves FORWARD toward screen (into the ball)
+ *   rGamma: positive = phone tilted to the RIGHT from calibration pose
+ *   rBeta:  negative = phone tilted FORWARD (bent-knee sweep position)
+ *
+ * @param {number} rGamma  — relative gamma tilt (°) from calibration
+ * @param {number} rBeta   — relative beta tilt (°) from calibration
+ * @param {number} ax      — peak-frame x acceleration (G units)
+ * @param {number} ay      — peak-frame y acceleration (G units)
+ * @param {number} az      — peak-frame z acceleration (G units)
+ * @param {number} power   — 0–100
+ * @param {'right'|'left'} handedness
  * @returns {string}
  */
-export function classifyShot(rAlpha, rGamma, rBeta, power) {
-  if (rGamma < -30 && rBeta < -20)                      return 'SWEEP';
-  if (rGamma > 30  && rBeta < -20)                      return 'REVERSE SWEEP';
-  if (rBeta < -40)                                       return 'HOOK';
-  if (rBeta < -20 && power > 60)                        return 'PULL';
-  if (rGamma >= -20 && rGamma <= 20 && power > 50)      return 'DRIVE';
-  if (rGamma >= -20 && rGamma <= 20 && power <= 50)     return 'DEFENSIVE';
-  if (rGamma > 20)                                       return 'CUT';
-  return 'DRIVE';
+export function classifyShot(rGamma, rBeta, ax, ay, az, power, handedness = 'right') {
+  // For left-hander: off side is to the left of the phone (negative x)
+  const sign = handedness === 'left' ? -1 : 1;
+
+  // Lateral direction from acceleration (most reliable: captures actual swing path)
+  const latAcc   = ax * sign;   // >0 = off side, <0 = leg side
+  const vertAcc  = ay;           // >0 = upward swing, <0 = downward
+  // Orientation at rest position (static indicators of stance/shot setup)
+  const gammaOff = rGamma * sign; // >0 = tilted toward off side
+
+  // ── HOOK: bat rises to meet short rising ball, sweeps to leg ──────────────
+  // Signature: strong upward acceleration, leg-side lateral
+  if (vertAcc > 0.40 && latAcc < -0.15)  return 'HOOK';
+  if (vertAcc > 0.55)                     return 'HOOK';  // almost purely upward
+
+  // ── PULL: horizontal pull to leg side at waist height ─────────────────────
+  // Like hook but less vertical; bat comes across body
+  if (vertAcc > 0.18 && latAcc < -0.28 && power > 40)  return 'PULL';
+
+  // ── SWEEP: bent-knee position, bat goes low across to leg ─────────────────
+  // Signature: significant forward body lean (negative rBeta) + leg-side movement
+  if (rBeta < -22 && latAcc < -0.18)   return 'SWEEP';
+  if (rBeta < -38)                       return 'SWEEP';  // very bent knee
+  // Leg-side gamma tilt also indicates sweep setup
+  if (gammaOff < -28 && rBeta < -15)   return 'SWEEP';
+
+  // ── REVERSE SWEEP: same low position but to off side ──────────────────────
+  if (rBeta < -22 && latAcc > 0.22)    return 'REVERSE SWEEP';
+  if (gammaOff > 35 && rBeta < -15)    return 'REVERSE SWEEP';
+
+  // ── CUT: short wide ball, horizontal slash to off side ────────────────────
+  // Signature: strong off-side lateral acceleration, not particularly upward
+  if (latAcc > 0.32 && Math.abs(vertAcc) < 0.35)  return 'CUT';
+  if (gammaOff > 30 && vertAcc < 0.20)             return 'CUT';
+
+  // ── DRIVE: straight bat through the line ──────────────────────────────────
+  if (power > 45)  return 'DRIVE';
+
+  // ── DEFENSIVE: low-power straight bat ─────────────────────────────────────
+  return 'DEFENSIVE';
 }
 
 /**
@@ -174,10 +227,13 @@ export function detectSwing(motionEvent) {
       const peak = _peakFrame ?? _swingFrames[0] ?? {};
       const power    = calculatePower(_peakMag);
       const shotType = classifyShot(
-        peak.rAlpha ?? 0,
         peak.rGamma ?? 0,
         peak.rBeta  ?? 0,
-        power
+        peak.ax     ?? 0,
+        peak.ay     ?? 0,
+        peak.az     ?? 0,
+        power,
+        _handedness,
       );
       const swingDuration = _swingFrames.length > 1
         ? _swingFrames[_swingFrames.length - 1].ts - _swingFrames[0].ts
@@ -266,18 +322,19 @@ function _onTouchEnd(e) {
   const velocity = dist / dt;   // px / ms
   const power    = Math.min(100, Math.max(10, Math.round(velocity * 130)));
 
-  // Shot type from swipe direction
-  const angle = Math.atan2(dy, dx) * 180 / Math.PI;   // -180..180
-  let shotType = 'DRIVE';
-  if (angle > -30  && angle < 30)   shotType = 'CUT';           // swipe right
-  else if (angle > 150 || angle < -150) shotType = 'DEFENSIVE'; // swipe left
-  else if (dy > 0) {                                             // downward swipes
-    if (dx < -40)      shotType = 'SWEEP';
-    else if (dx > 40)  shotType = 'PULL';
-    else               shotType = 'DRIVE';
-  } else {
-    shotType = 'HOOK';    // upward swipe
-  }
+  // For left-hander: mirror horizontal axis so swipe-right = leg side
+  const sign    = _handedness === 'left' ? -1 : 1;
+  const offDx   = dx * sign;   // positive = swipe toward off side
+  const legDx   = -offDx;      // positive = swipe toward leg side
+
+  let shotType;
+  if (dy < -50)                      shotType = 'HOOK';          // swipe UP
+  else if (dy > 40 && legDx > 40)   shotType = 'SWEEP';         // swipe DOWN+leg
+  else if (dy > 40 && offDx > 40)   shotType = 'PULL';          // swipe DOWN+off
+  else if (offDx > 60)               shotType = 'CUT';           // swipe to off side
+  else if (legDx > 60)               shotType = 'SWEEP';         // swipe to leg side
+  else if (dy > 30)                  shotType = 'DRIVE';         // swipe down
+  else                               shotType = power > 50 ? 'DRIVE' : 'DEFENSIVE';
 
   emitSwing(power, shotType);
 }

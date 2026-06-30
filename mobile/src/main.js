@@ -13,7 +13,7 @@
 
 import { io } from 'socket.io-client';
 import { mountUI } from './ui.js';
-import { captureBaseline, startListening, setDebugCallback, emitSwing } from './motion.js';
+import { captureBaseline, startListening, setDebugCallback, emitSwing, setHandedness } from './motion.js';
 import './style.css';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || `http://${window.location.hostname}:3001`;
@@ -55,6 +55,12 @@ async function boot() {
   // Server confirmed both sides are present — show the grip guide.
   socket.on('paired', () => {
     ui.goToScreen(2);
+  });
+
+  // Desktop sends batting handedness so shot detection mirrors correctly.
+  socket.on('handedness', ({ hand }) => {
+    setHandedness(hand);
+    console.log('[main] handedness set to', hand);
   });
 
   // "I'm ready" tap → request iOS motion permission → jump straight to HUD.

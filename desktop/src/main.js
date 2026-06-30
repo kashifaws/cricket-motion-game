@@ -54,6 +54,18 @@ document.querySelectorAll('.over-btn').forEach(btn => {
   });
 });
 
+// ── Handedness selector ───────────────────────────────────────────────────────
+
+let selectedHand = 'right';
+
+document.querySelectorAll('.hand-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.hand-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedHand = btn.dataset.hand;
+  });
+});
+
 // ── Sound engine ──────────────────────────────────────────────────────────────
 
 /**
@@ -265,6 +277,8 @@ socket.on('paired', () => {
   qrOverlay.classList.add('hidden');
   scorecard.setBatsman('Player 1');
   scorecard.setTotalOvers(selectedOvers);
+  engine?.setHandedness(selectedHand);
+  socket.emit('handedness', { hand: selectedHand });
   gameRunning = true;
   showCameraBadge('Batsman POV');
   setTimeout(startNextDelivery, 1200);
@@ -379,7 +393,7 @@ function handleShotResult({ type, direction }) {
     return;
   }
 
-  const delay = type === 'wicket' ? 3000 : 1800;
+  const delay = type === 'wicket' ? 3000 : 2000;
   setTimeout(startNextDelivery, delay);
 }
 
