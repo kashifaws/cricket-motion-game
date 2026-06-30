@@ -21,14 +21,15 @@
 
 import {
   Scene, PerspectiveCamera, WebGLRenderer,
-  AmbientLight, DirectionalLight,
-  PlaneGeometry, BoxGeometry, SphereGeometry, CapsuleGeometry,
-  CylinderGeometry, EdgesGeometry, TorusGeometry,
+  BoxGeometry, SphereGeometry, CylinderGeometry, EdgesGeometry,
   MeshLambertMaterial, LineBasicMaterial,
   Mesh, LineSegments, Group,
   SpriteMaterial, Sprite, CanvasTexture,
   Color, Vector3, CatmullRomCurve3, MathUtils,
 } from 'three';
+import Stadium      from './scene/Stadium.js';
+import { StickFigure }  from './characters/StickFigure.js';
+import AnimationController from './characters/AnimationController.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -215,35 +216,34 @@ export class GameEngine {
   #camera;
   #renderer;
 
-  // Scene meshes
-  #bowlerMesh;
+  // Stadium (ground, pitch, stumps, crowd, sky, boards)
+  #stadium = null;
+
+  // Characters — StickFigure instances
+  #bowlerFigure   = null;
+  #fielderFigures = [];
+  #umpireFigure   = null;
+  #umpireAnim     = null;   // AnimationController for umpire signals
+
+  // Ball mesh
   #ballMesh;
 
   // First-person bat HUD (parented to camera)
   #batHUD;
 
-  // Batsman (hidden in FP view, kept for stump references)
+  // Batsman (hidden in FP view)
   #batsmanGroup;
   #batGroup;
   #rightArmGroup;
   #leftArmGroup;
   #torso;
 
-  // Stump & bail animation — batting crease (z=3) only
-  #battingStumps    = [];   // 3 stump Mesh objects
-  #battingBails     = [];   // 2 bail Mesh objects
-  #battingStumpRest = [];   // rest positions for stumps
-  #battingBailRest  = [];   // rest positions for bails
-
-  // Field
-  #fielderMeshes = [];
-
-  // Umpire
-  #umpireMesh = null;
-
   // Camera views
   #cameraViews = [];
   #currentView = 0;
+
+  // Frame-to-frame delta tracking (seconds) for stadium / umpireAnim updates
+  #lastNow = 0;
 
   // Animation
   #tweens = new TweenManager();
@@ -297,16 +297,13 @@ export class GameEngine {
     this.#initRenderer(canvas);
     this.#initScene();
     this.#initCamera();
-    this.#initLights();
-    this.#buildWorld();
-    this.#buildBoundaryRope();
-    this.#buildCrowdStands();
-    this.#buildBowler();
+    this.#buildStadium();
+    this.#buildBowlerFigure();
     this.#buildBall();
     this.#buildBatsman();
     this.#buildBatHUD();
-    this.#buildFielders();
-    this.#buildUmpire();
+    this.#buildFielderFigures();
+    this.#buildUmpireFigure();
     this.#initCameraViews();
   }
 
@@ -356,134 +353,21 @@ export class GameEngine {
     return v.name;
   }
 
-  #initLights() {
-    this.#scene.add(new AmbientLight(0xffffff, 0.55));
-
-    const sun = new DirectionalLight(0xfff5e0, 1.3);
-    sun.position.set(12, 25, 10);
-    sun.castShadow = true;
-    sun.shadow.mapSize.width  = 2048;
-    sun.shadow.mapSize.height = 2048;
-    sun.shadow.camera.left   = -45;
-    sun.shadow.camera.right  =  45;
-    sun.shadow.camera.top    =  45;
-    sun.shadow.camera.bottom = -45;
-    sun.shadow.camera.far    =  120;
-    this.#scene.add(sun);
-
-    const fill = new DirectionalLight(0xc8e8ff, 0.35);
-    fill.position.set(-10, 8, -5);
-    this.#scene.add(fill);
-  }
-
   // ── Scene construction ────────────────────────────────────────────────────
 
-  #buildWorld() {
-    const outfield = new Mesh(
-      new PlaneGeometry(100, 100),
-      new MeshLambertMaterial({ color: 0x2e7d2e }),
-    );
-    outfield.rotation.x = -Math.PI / 2;
-    outfield.receiveShadow = true;
-    this.#scene.add(outfield);
-
-    const pitchStrip = new Mesh(
-      new PlaneGeometry(PITCH_WIDTH, PITCH_LENGTH),
-      new MeshLambertMaterial({ color: 0xc4a96a }),
-    );
-    pitchStrip.rotation.x = -Math.PI / 2;
-    pitchStrip.position.y  = 0.005;
-    pitchStrip.receiveShadow = true;
-    this.#scene.add(pitchStrip);
-
-    // Popping crease + bowling crease white lines
-    this.#addCreaseLine( 3);
-    this.#addCreaseLine(-3);
-    // Return crease marks (short perpendicular lines at each end of popping crease)
-    for (const z of [3, -3]) {
-      for (const x of [-1.32, 1.32]) {
-        const tick = new Mesh(
-          new BoxGeometry(0.05, 0.004, 0.55),
-          new MeshLambertMaterial({ color: 0xffffff }),
-        );
-        tick.position.set(x, 0.011, z + (z > 0 ? -0.27 : 0.27));
-        this.#scene.add(tick);
-      }
-    }
-
-    this.#addStumps( 3);   // batting crease — refs saved for animation
-    this.#addStumps(-3);   // bowling crease
-
-    // Crowd stands and boundary rope are added from the constructor
-    // after #buildWorld(), #buildBoundaryRope(), #buildCrowdStands().
+  #buildStadium() {
+    this.#stadium = new Stadium(this.#scene, this.#renderer);
   }
 
-  #addCreaseLine(z) {
-    const line = new Mesh(
-      new BoxGeometry(PITCH_WIDTH + 0.6, 0.004, 0.06),
-      new MeshLambertMaterial({ color: 0xffffff }),
-    );
-    line.position.set(0, 0.01, z);
-    this.#scene.add(line);
-  }
-
-  #addWall(x, y, z, w, h, d, colour = 0x4a7c4a) {
-    const wall = new Mesh(
-      new BoxGeometry(w, h, d),
-      new MeshLambertMaterial({ color: colour }),
-    );
-    wall.position.set(x, y, z);
-    wall.castShadow = wall.receiveShadow = true;
-    this.#scene.add(wall);
-  }
-
-  /**
-   * Three cylinder stumps + two bail boxes at crease Z.
-   * If z > 0 (batting crease), refs are stored for BOWLED animation.
-   */
-  #addStumps(z) {
-    const mat    = new MeshLambertMaterial({ color: 0xf5deb3 });
-    const stumps = [];
-    const bails  = [];
-
-    for (const x of [-0.115, 0, 0.115]) {
-      const stump = new Mesh(new CylinderGeometry(0.02, 0.02, 0.7, 8), mat);
-      stump.position.set(x, 0.35, z);
-      stump.castShadow = true;
-      this.#scene.add(stump);
-      stumps.push(stump);
-    }
-    for (const x of [-0.057, 0.057]) {
-      const bail = new Mesh(new BoxGeometry(0.08, 0.02, 0.02), mat);
-      bail.position.set(x, 0.72, z);
-      this.#scene.add(bail);
-      bails.push(bail);
-    }
-
-    if (z > 0) {
-      this.#battingStumps    = stumps;
-      this.#battingBails     = bails;
-      this.#battingStumpRest = stumps.map(s => ({ pos: s.position.clone() }));
-      this.#battingBailRest  = bails.map(b => ({ pos: b.position.clone() }));
-    }
-  }
-
-  #buildBowler() {
-    this.#bowlerMesh = new Mesh(
-      new CapsuleGeometry(0.28, 0.88, 4, 8),
-      new MeshLambertMaterial({ color: 0xf5f5f5 }),
-    );
-    this.#bowlerMesh.position.set(0, 1.02, BOWLER_START_Z);
-    this.#bowlerMesh.castShadow = true;
-    this.#scene.add(this.#bowlerMesh);
-
-    const head = new Mesh(
-      new SphereGeometry(0.22, 10, 7),
-      new MeshLambertMaterial({ color: 0xd4956a }),
-    );
-    head.position.y = 0.88;
-    head.castShadow = true;
-    this.#bowlerMesh.add(head);
+  #buildBowlerFigure() {
+    this.#bowlerFigure = new StickFigure({
+      role:        'bowler',
+      teamColor:   '#2244AA',
+      helmetColor: '#112266',
+    });
+    this.#bowlerFigure.setBowlingStance();
+    this.#bowlerFigure.group.position.z = BOWLER_START_Z;
+    this.#scene.add(this.#bowlerFigure.group);
   }
 
   #buildBall() {
@@ -590,58 +474,21 @@ export class GameEngine {
     this.#camera.add(this.#batHUD);
   }
 
-  /**
-   * Square-leg umpire with white coat and signal arm.
-   * #umpireMesh is the body — arm rotation is animated by signalUmpire().
-   */
-  #buildUmpire() {
-    const coatMat = new MeshLambertMaterial({ color: 0xf0f0f0 });
-    const skinMat = new MeshLambertMaterial({ color: 0xd4956a });
-    const panMat  = new MeshLambertMaterial({ color: 0x222222 });
+  #buildFielderFigures() {
+    for (const fp of FIELDER_POSITIONS) {
+      const fig = new StickFigure({ role: 'fielder', teamColor: '#2244AA' });
+      fig.setFieldingStance(fp.x, fp.z);
+      this.#scene.add(fig.group);
+      this.#fielderFigures.push(fig);
+    }
+  }
 
-    const root = new Group();
-    root.position.set(-3.5, 0, 1.5);  // square leg — slightly behind batting crease
-
-    // Legs / trousers
-    const legs = new Mesh(new BoxGeometry(0.30, 0.55, 0.22), panMat);
-    legs.position.y = 0.28;
-    legs.castShadow = true;
-    root.add(legs);
-
-    // White coat body
-    const body = new Mesh(new CapsuleGeometry(0.22, 0.55, 4, 8), coatMat);
-    body.position.y = 1.05;
-    body.castShadow = true;
-    root.add(body);
-
-    // Head
-    const head = new Mesh(new SphereGeometry(0.16, 10, 7), skinMat);
-    head.position.y = 1.63;
-    head.castShadow = true;
-    root.add(head);
-
-    // White hat
-    const hatBrim = new Mesh(new CylinderGeometry(0.22, 0.22, 0.04, 12), coatMat);
-    hatBrim.position.y = 1.76;
-    root.add(hatBrim);
-    const hatTop = new Mesh(new CylinderGeometry(0.16, 0.16, 0.14, 12), coatMat);
-    hatTop.position.y = 1.84;
-    root.add(hatTop);
-
-    // Signal arm — pivot at shoulder, raised/lowered by signalUmpire()
-    const armPivot = new Group();
-    armPivot.position.set(0.26, 1.28, 0);
-    const arm = new Mesh(new CylinderGeometry(0.06, 0.06, 0.40, 6), coatMat);
-    arm.position.y = -0.20;   // hangs down by default (arm at side)
-    armPivot.add(arm);
-    root.add(armPivot);
-
-    // Face toward pitch (batsman end)
-    root.rotation.y = Math.PI * 0.5;
-
-    this.#umpireMesh = root;
-    this.#umpireMesh.userData.armPivot = armPivot;
-    this.#scene.add(root);
+  #buildUmpireFigure() {
+    this.#umpireFigure = new StickFigure({ role: 'umpire' });
+    this.#umpireFigure.group.position.set(-3.5, 0, 1.5);
+    this.#umpireFigure.group.rotation.y = Math.PI * 0.5;
+    this.#scene.add(this.#umpireFigure.group);
+    this.#umpireAnim = new AnimationController(this.#umpireFigure);
   }
 
   /**
@@ -649,101 +496,13 @@ export class GameEngine {
    * @param {'six'|'four'|'out'|'wide'|'noball'} signal
    */
   signalUmpire(signal) {
-    if (!this.#umpireMesh) return;
-    const pivot = this.#umpireMesh.userData.armPivot;
-    const tm    = this.#tweens;
-
-    // Each signal: arm raises to target angle (z rotation from shoulder pivot), holds, returns
-    const signals = {
-      six:    { rz:  Math.PI,       delay: 180 },  // both arms up (use one)
-      four:   { rz: -Math.PI * 0.5, delay: 160 },  // arm extended sideways
-      out:    { rz: -Math.PI * 0.8, delay: 200 },  // arm raised high with finger up
-      wide:   { rz: -Math.PI * 0.5, delay: 160 },
-      noball: { rz: -Math.PI * 0.4, delay: 140 },
-    };
-    const cfg = signals[signal] ?? signals.four;
-
-    tm.to(pivot.rotation, 'z', cfg.rz, 300, 0);
-    tm.to(pivot.rotation, 'z', 0,      350, cfg.delay + 300);
-  }
-
-  /** Place 8 simple fielder figures at the standard T20 positions. */
-  #buildFielders() {
-    const bodyMat = new MeshLambertMaterial({ color: 0xf5f5f5 });
-    const headMat = new MeshLambertMaterial({ color: 0xd4956a });
-
-    for (const fp of FIELDER_POSITIONS) {
-      const body = new Mesh(new CylinderGeometry(0.20, 0.20, 1.5, 6), bodyMat);
-      body.position.set(fp.x, 0.75, fp.z);
-      body.castShadow = true;
-      this.#scene.add(body);
-
-      const head = new Mesh(new SphereGeometry(0.17, 6, 6), headMat);
-      head.position.y = 0.9;
-      body.add(head);
-
-      this.#fielderMeshes.push(body);
-    }
-  }
-
-  // ── Environment: boundary rope + crowd stands ─────────────────────────────
-
-  /** White torus rope lying flat at the boundary radius. */
-  #buildBoundaryRope() {
-    const rope = new Mesh(
-      new TorusGeometry(BOUNDARY_DIST, 0.09, 8, 96),
-      new MeshLambertMaterial({ color: 0xffffff }),
-    );
-    rope.rotation.x = Math.PI / 2;
-    rope.position.y = 0.06;
-    this.#scene.add(rope);
-  }
-
-  /**
-   * Four crowd-stand blocks, one per boundary side, textured with a
-   * randomised coloured-pixel crowd canvas.
-   */
-  #buildCrowdStands() {
-    // Build a shared crowd texture — coloured pixels in tier rows
-    const cvs = document.createElement('canvas');
-    cvs.width = 128; cvs.height = 48;
-    const c2  = cvs.getContext('2d');
-    const pal = [
-      '#c62828', '#283593', '#1b5e20', '#f9a825',
-      '#6a1b9a', '#00695c', '#bf360c', '#e0e0e0',
-    ];
-    for (let y = 0; y < 48; y++) {
-      for (let x = 0; x < 128; x++) {
-        // Horizontal tier dividers every 6 rows
-        c2.fillStyle = y % 6 < 1 ? '#080808' : pal[(Math.random() * pal.length) | 0];
-        c2.fillRect(x, y, 1, 1);
-      }
-    }
-    const tex = new CanvasTexture(cvs);
-    const mat = new MeshLambertMaterial({ map: tex });
-
-    const stands = [
-      { x:   0, z: -46, ry: 0,              w: 84 },
-      { x:   0, z:  46, ry: Math.PI,        w: 84 },
-      { x: -44, z:   0, ry:  Math.PI / 2,   w: 84 },
-      { x:  44, z:   0, ry: -Math.PI / 2,   w: 84 },
-    ];
-    for (const s of stands) {
-      const stand = new Mesh(new BoxGeometry(s.w, 14, 5), mat);
-      stand.position.set(s.x, 6.5, s.z);
-      stand.rotation.y = s.ry;
-      this.#scene.add(stand);
-
-      // Grassy bank in front of each stand
-      const bank = new Mesh(
-        new BoxGeometry(s.w, 2, 4),
-        new MeshLambertMaterial({ color: 0x2a4a2a }),
-      );
-      bank.position.set(s.x, 1.0, s.z + (s.ry === 0 ? 4.5 : s.ry === Math.PI ? -4.5 : 0));
-      if (s.ry === Math.PI / 2)  bank.position.set(s.x + 4.5, 1.0, 0);
-      if (s.ry === -Math.PI / 2) bank.position.set(s.x - 4.5, 1.0, 0);
-      bank.rotation.y = s.ry;
-      this.#scene.add(bank);
+    if (!this.#umpireAnim) return;
+    switch (signal) {
+      case 'out':    this.#umpireAnim.animateUmpireOut();    break;
+      case 'wide':   this.#umpireAnim.animateUmpireWide();   break;
+      case 'noball': this.#umpireAnim.animateUmpireNoBall(); break;
+      case 'six':    this.#umpireAnim.animateUmpireOut();    break;  // arm raised high
+      case 'four':   this.#umpireAnim.animateUmpireWide();   break;  // arm extended sideways
     }
   }
 
@@ -759,7 +518,8 @@ export class GameEngine {
     this.#hitWindow.open    = false;
     clearTimeout(this.#windowTimer);
 
-    this.#bowlerMesh.position.set(lineOffset * 0.5, 1.02, BOWLER_START_Z);
+    const bg = this.#bowlerFigure.group;
+    bg.position.set(lineOffset * 0.5, 0, BOWLER_START_Z);
     this.#ballMesh.visible = false;
 
     this.#state         = 'BOWLER_RUNNING';
@@ -961,52 +721,6 @@ export class GameEngine {
     return             { type: 'single', direction: dirLabel };
   }
 
-  // ── BOWLED: stump fly animation ───────────────────────────────────────────
-
-  #animateBowledStumps() {
-    const tm = this.#tweens;
-
-    // Stumps: topple outward and lean to ground (0=leg, 1=middle, 2=off side)
-    this.#battingStumps.forEach((s, i) => {
-      const xDir = (i - 1) * 1.5;  // -1.5, 0, +1.5
-      const zDir = (Math.random() - 0.5) * 0.8;
-      tm.to(s.position, 'x', s.position.x + xDir * 0.55, 480, 0);
-      tm.to(s.position, 'z', s.position.z + zDir,          480, 0);
-      tm.to(s.position, 'y', 0.12,                          480, 0);
-      tm.to(s.rotation, 'z', (i - 1) * Math.PI * 0.5 + (Math.random() - 0.5) * 0.5, 420, 0);
-      tm.to(s.rotation, 'x', (Math.random() - 0.5) * 0.6,  420, 0);
-    });
-
-    // Bails: launch upward (two-phase: ascent then gravity drop)
-    this.#battingBails.forEach((b, i) => {
-      const xDir = (i === 0 ? -1 : 1) * (0.9 + Math.random() * 0.6);
-      const zDir = (Math.random() - 0.5) * 1.8;
-      const yUp  = 2.0 + Math.random() * 1.0;
-
-      // Phase 1: upward launch (fast)
-      tm.to(b.position, 'x', b.position.x + xDir * 0.6, 200, 0);
-      tm.to(b.position, 'z', b.position.z + zDir * 0.4,  200, 0);
-      tm.to(b.position, 'y', b.position.y + yUp,          200, 0);
-      // Tumble throughout
-      tm.to(b.rotation, 'z', (Math.random() - 0.5) * Math.PI * 5, 680, 0);
-      tm.to(b.rotation, 'x', (Math.random() - 0.5) * Math.PI * 4, 680, 0);
-      // Phase 2: gravity drop (starts exactly when phase 1 ends)
-      tm.to(b.position, 'x', b.position.x + xDir * 1.4, 500, 200);
-      tm.to(b.position, 'z', b.position.z + zDir,         500, 200);
-      tm.to(b.position, 'y', 0.04,                         500, 200);
-    });
-  }
-
-  #resetStumps() {
-    this.#battingStumps.forEach((s, i) => {
-      const r = this.#battingStumpRest[i];
-      if (r) { s.position.copy(r.pos); s.rotation.set(0, 0, 0); }
-    });
-    this.#battingBails.forEach((b, i) => {
-      const r = this.#battingBailRest[i];
-      if (r) { b.position.copy(r.pos); b.rotation.set(0, 0, 0); }
-    });
-  }
 
   // ── Legacy swing path (processMotionPacket → onSwingReceived) ─────────────
 
@@ -1314,8 +1028,13 @@ export class GameEngine {
   }
 
   #update(now) {
+    const delta = this.#lastNow > 0 ? (now - this.#lastNow) / 1000 : 0.016;
+    this.#lastNow = now;
+
     this.#tweens.tick(now);
     this.#stepShake();
+    this.#stadium?.update(delta);
+    this.#umpireAnim?.update(delta);
 
     switch (this.#state) {
       case 'BOWLER_RUNNING': this.#stepBowler(now); break;
@@ -1337,9 +1056,24 @@ export class GameEngine {
   }
 
   #stepBowler(now) {
-    const t = Math.min((now - this.#bowlerStartMs) / BOWLER_RUN_MS, 1);
-    this.#bowlerMesh.position.z = BOWLER_START_Z + (BOWLER_END_Z - BOWLER_START_Z) * t;
-    this.#bowlerMesh.position.y = 1.02 + Math.abs(Math.sin(t * Math.PI * 10)) * 0.12;
+    const t  = Math.min((now - this.#bowlerStartMs) / BOWLER_RUN_MS, 1);
+    const g  = this.#bowlerFigure.group;
+    const f  = this.#bowlerFigure;
+    g.position.z = BOWLER_START_Z + (BOWLER_END_Z - BOWLER_START_Z) * t;
+    g.position.y = Math.abs(Math.sin(t * Math.PI * 10)) * 0.12;
+
+    // Procedural run-up limb animation
+    const phase = t * Math.PI * 16;
+    f.leftThigh.rotation.x   =  Math.sin(phase) * 0.55;
+    f.rightThigh.rotation.x  = -Math.sin(phase) * 0.55;
+    f.leftShin.rotation.x    =  Math.max(0, Math.sin(phase + 0.5)) * 0.35;
+    f.rightShin.rotation.x   =  Math.max(0, Math.sin(phase + 0.5 + Math.PI)) * 0.35;
+    f.leftUpperArm.rotation.x  = -Math.sin(phase) * 0.45;
+    // Right arm sweeps up into delivery position near the end
+    f.rightUpperArm.rotation.x = t < 0.80
+      ? Math.sin(phase) * 0.45
+      : -2.2 * ((t - 0.80) / 0.20);
+
     if (t >= 1) this.#releaseBall();
   }
 
@@ -1371,8 +1105,7 @@ export class GameEngine {
       if (!this.#swingDetected) {
         const onLine = Math.abs(this.#pendingLineOffset) < 0.5;
         if (onLine) {
-          // Ball hit the stumps — fly animation, then notify
-          this.#animateBowledStumps();
+          this.#stadium?.stumpsExplode('batting');
           this.#onShotResult?.({ type: 'wicket', direction: 'straight' });
         } else {
           this.#onShotResult?.({ type: 'dot', direction: 'straight' });
@@ -1396,8 +1129,8 @@ export class GameEngine {
     clearTimeout(this.#windowTimer);
     setTimeout(() => {
       this.#ballMesh.visible = false;
-      this.#bowlerMesh.position.set(0, 1.02, BOWLER_START_Z);
-      this.#resetStumps();
+      this.#bowlerFigure.setBowlingStance();
+      this.#bowlerFigure.group.position.z = BOWLER_START_Z;  // override stance default
     }, 300);
   }
 }
