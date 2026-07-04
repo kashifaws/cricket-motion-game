@@ -91,6 +91,29 @@ button, [role="button"] {
 .quality-badge.mistimed { color: #ff9800; }
 .quality-badge.edged    { color: #f44336; }
 
+/* ── Wake lock toggle button (HUD top bar) ─────────────────────────────────── */
+#wakelock-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  background: rgba(58, 26, 26, 0.6);   /* red tint when inactive */
+  font-size: 20px;
+  cursor: pointer;
+  transition: background 0.3s, border-color 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-appearance: none;
+  padding: 0;
+}
+#wakelock-btn.active {
+  background: rgba(0, 100, 0, 0.6);    /* green tint when active */
+  border-color: #00ff88;
+}
+
 /* ── Portrait-only: landscape rotation warning ─────────────────────────────── */
 .rotation-warning {
   display: none;

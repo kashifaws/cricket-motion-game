@@ -115,6 +115,63 @@ const STYLES = `
     line-height: 1.45;
   }
 
+  /* ── Handedness selection (Screen 2) ─────────────────────────────────────── */
+  .hand-question {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .hand-choice-row {
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .hand-choice {
+    flex: 1;
+    height: 56px;
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    -webkit-appearance: none;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+  }
+
+  .hand-choice.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* ── Wake lock toast ─────────────────────────────────────────────────────── */
+  .wl-toast {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(46, 125, 50, 0.92);
+    color: #fff;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 8px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--accent);
+    z-index: 200;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .wl-toast.visible { opacity: 1; }
+
   .btn-ready {
     display: flex;
     align-items: center;
@@ -615,6 +672,11 @@ export function mountUI() {
             <p><strong style="color:#a5d6a7">Swing!</strong> — when the ball comes, swing the phone like a real shot. Speed = power. Tap "I'm ready" to start</p>
           </div>
         </div>
+        <p class="hand-question">Are you right or left handed?</p>
+        <div class="hand-choice-row">
+          <button class="hand-choice" data-hand="right" id="hand-right">🏏 RIGHT HANDED</button>
+          <button class="hand-choice" data-hand="left"  id="hand-left">🏏 LEFT HANDED</button>
+        </div>
         <button class="btn-ready" id="btn-ready">I'm ready — start playing</button>
       </div>
 
@@ -642,7 +704,10 @@ export function mountUI() {
 
         <div class="hud-topbar">
           <span class="hud-shot-label" id="hud-shot-label">DRIVE</span>
-          <div class="hud-conn-dot" id="hud-conn-dot"></div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button id="wakelock-btn" title="Keep screen on">🔓</button>
+            <div class="hud-conn-dot" id="hud-conn-dot"></div>
+          </div>
         </div>
 
         <div class="hud-center">
@@ -708,7 +773,52 @@ export function mountUI() {
   const dbgCalls     = getEl('dbg-calls');
   const dbgSent      = getEl('dbg-sent');
   const btnTapSwing  = getEl('btn-tap-swing');
+  const handRightBtn = getEl('hand-right');
+  const handLeftBtn  = getEl('hand-left');
+  const wakelockBtn  = getEl('wakelock-btn');
   let _dbgSentCount  = 0;
+
+  // Toast (wake lock notifications)
+  const toastEl = document.createElement('div');
+  toastEl.className = 'wl-toast';
+  document.body.appendChild(toastEl);
+  let _toastTimer = null;
+
+  function showToast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('visible');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => toastEl.classList.remove('visible'), 1800);
+  }
+
+  // ── Handedness selection ──────────────────────────────────────────────────
+  let _handedness = localStorage.getItem('handedness') === 'left' ? 'left' : 'right';
+  let _onHandedness = null;
+
+  function renderHandButtons() {
+    handRightBtn.classList.toggle('active', _handedness === 'right');
+    handLeftBtn.classList.toggle('active', _handedness === 'left');
+  }
+  renderHandButtons();
+
+  function selectHand(hand) {
+    _handedness = hand;
+    localStorage.setItem('handedness', hand);
+    renderHandButtons();
+    navigator.vibrate?.([40]);
+    _onHandedness?.(hand);
+  }
+  handRightBtn.addEventListener('click', () => selectHand('right'));
+  handLeftBtn.addEventListener('click', () => selectHand('left'));
+
+  // ── Wake lock button ──────────────────────────────────────────────────────
+  let _onWakeLockToggle = null;
+  wakelockBtn.addEventListener('click', () => _onWakeLockToggle?.());
+
+  function setWakeLockActive(active) {
+    wakelockBtn.textContent = active ? '🔒' : '🔓';
+    wakelockBtn.classList.toggle('active', active);
+  }
 
   const screens = {
     1: getEl('screen-1'),
@@ -903,6 +1013,21 @@ export function mountUI() {
 
     /** Register tap-swing callback. */
     onTapSwing(cb) { btnTapSwing.addEventListener('click', cb); },
+
+    /** Register handedness-change callback (Screen 2 buttons). */
+    onHandedness(cb) { _onHandedness = cb; },
+
+    /** Current handedness selection ('right' | 'left'). */
+    getHandedness() { return _handedness; },
+
+    /** Register wake lock toggle-button callback. */
+    onWakeLockToggle(cb) { _onWakeLockToggle = cb; },
+
+    /** Reflect wake lock state on the HUD button (🔒 active / 🔓 inactive). */
+    setWakeLockActive,
+
+    /** Show a brief pill toast at the top of the screen. */
+    showToast,
 
     /**
      * Update the live HUD after a swing is detected.

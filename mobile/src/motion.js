@@ -254,12 +254,19 @@ export function detectSwing(motionEvent) {
         quality > 60 ? 'GOOD'    :
         quality > 40 ? 'MISTIMED': 'EDGED';
 
+      // Total gyro magnitude at the peak frame — used by the desktop
+      // ShotClassifier to detect wrist-snap shots (helicopter).
+      const rotMag = Math.sqrt(
+        (peak.gx ?? 0) ** 2 + (peak.gy ?? 0) ** 2 + (peak.gz ?? 0) ** 2,
+      );
+
       const payload = {
         power,
         shotType,
         quality,
         qualityLabel,
         peakMag: _peakMag,
+        rotMag,
         swingDuration,
         alpha: peak.rAlpha ?? 0,
         beta:  peak.rBeta  ?? 0,

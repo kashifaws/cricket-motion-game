@@ -23,14 +23,35 @@
           </div>
         </div>
 
-        <!-- Over selector — choose match length before scanning -->
+        <!-- Match format selector -->
+        <div id="format-selector">
+          <p class="over-label">Match format</p>
+          <div class="format-btns">
+            <button class="format-btn active" data-format="T20"  data-overs="20">T20 — 20 ov</button>
+            <button class="format-btn"        data-format="ODI"  data-overs="50">ODI — 50 ov</button>
+            <button class="format-btn"        data-format="TEST" data-overs="90">TEST</button>
+          </div>
+        </div>
+
+        <!-- Over selector — quick-match override for match length -->
         <div id="over-selector">
-          <p class="over-label">Select overs</p>
+          <p class="over-label">Quick match overs</p>
           <div class="over-btns">
             <button class="over-btn" data-overs="3">3</button>
             <button class="over-btn active" data-overs="6">6</button>
             <button class="over-btn" data-overs="10">10</button>
             <button class="over-btn" data-overs="20">20</button>
+          </div>
+        </div>
+
+        <!-- AI difficulty (second innings) -->
+        <div id="difficulty-selector">
+          <p class="over-label">AI difficulty</p>
+          <div class="difficulty-btns">
+            <button class="difficulty-btn"        data-difficulty="easy">EASY</button>
+            <button class="difficulty-btn active" data-difficulty="medium">MED</button>
+            <button class="difficulty-btn"        data-difficulty="hard">HARD</button>
+            <button class="difficulty-btn"        data-difficulty="legend">LEGEND</button>
           </div>
         </div>
 

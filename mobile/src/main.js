@@ -14,6 +14,7 @@
 import { io } from 'socket.io-client';
 import { mountUI } from './ui.js';
 import { captureBaseline, startListening, setDebugCallback, emitSwing, setHandedness } from './motion.js';
+import { WakeLock } from './wakeLock.js';
 import './style.css';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || `http://${window.location.hostname}:3001`;
@@ -25,6 +26,19 @@ function getRoomId() {
 async function boot() {
   const roomId = getRoomId();
   const ui = mountUI();
+  const wakeLock = new WakeLock();
+
+  // Reflect wake lock state on the HUD button; toast when it activates.
+  wakeLock.onChange = (active) => {
+    ui.setWakeLockActive(active);
+    if (active) ui.showToast('Screen On');
+  };
+  wakeLock.listenForVisibilityChange();
+
+  ui.onWakeLockToggle(() => {
+    if (wakeLock.isActive) wakeLock.release();
+    else wakeLock.request();
+  });
 
   if (!roomId) {
     ui.setStatus('No room ID — scan the QR code from the desktop.');
@@ -52,12 +66,22 @@ async function boot() {
     }
   });
 
+  // ── Handedness — user selection on Screen 2, persisted in localStorage ──
+  function applyHandedness(hand) {
+    setHandedness(hand);
+    socket.emit('set_handedness', { isRightHanded: hand !== 'left' });
+  }
+
+  ui.onHandedness(applyHandedness);
+
   // Server confirmed both sides are present — show the grip guide.
   socket.on('paired', () => {
     ui.goToScreen(2);
+    // Send the stored handedness so the desktop mirrors bat + classifier.
+    applyHandedness(ui.getHandedness());
   });
 
-  // Desktop sends batting handedness so shot detection mirrors correctly.
+  // Desktop can also set handedness (pre-game screen fallback).
   socket.on('handedness', ({ hand }) => {
     setHandedness(hand);
     console.log('[main] handedness set to', hand);
@@ -70,6 +94,7 @@ async function boot() {
       setDebugCallback(({ mag, state, sent }) => ui.updateDebug({ mag, state, sent }));
       await startListening(socket, roomId);
       ui.goToScreen(4);   // skip manual calibration — auto-calibrate handles it
+      wakeLock.request(); // keep the screen on while batting — no tap needed
     } catch (err) {
       ui.goToScreen(1);
       ui.setStatus(`Motion permission denied: ${err.message}`);

@@ -290,3 +290,171 @@ html, body {
   letter-spacing: 0.02em;
   top: 22%;
 }
+
+/* ── Format / difficulty selectors (setup card) ──────────────────────────────── */
+#format-selector, #difficulty-selector { text-align: center; }
+
+.format-btns, .difficulty-btns {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.format-btn, .difficulty-btn {
+  padding: 0 12px;
+  height: 40px;
+  border-radius: 8px;
+  border: 2px solid rgba(76, 175, 80, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+  color: #c8e6c9;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.format-btn:hover, .difficulty-btn:hover {
+  background: rgba(76, 175, 80, 0.18);
+  border-color: #4caf50;
+  color: #ffffff;
+}
+
+.format-btn.active, .difficulty-btn.active {
+  background: rgba(76, 175, 80, 0.35);
+  border-color: #4caf50;
+  color: #ffffff;
+}
+
+/* ── Match overlays: toss / innings break / result ───────────────────────────── */
+.match-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 10, 0, 0.85);
+  backdrop-filter: blur(6px);
+  z-index: 120;
+}
+.match-overlay.hidden { display: none; }
+
+.match-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(76, 175, 80, 0.5);
+  border-radius: 18px;
+  padding: 36px 48px;
+  max-width: 520px;
+  max-height: 84vh;
+  overflow-y: auto;
+  text-align: center;
+  color: #e8f5e9;
+}
+
+.match-card h2 {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #4caf50;
+  letter-spacing: 0.04em;
+}
+
+.match-card .match-sub {
+  font-size: 1.05rem;
+  color: #a5d6a7;
+  line-height: 1.5;
+}
+
+.match-card .match-big {
+  font-size: 2.6rem;
+  font-weight: 900;
+  color: #ffeb3b;
+  letter-spacing: 0.05em;
+}
+
+.match-btn-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+.match-btn {
+  min-width: 140px;
+  height: 52px;
+  padding: 0 22px;
+  border-radius: 10px;
+  border: 2px solid #4caf50;
+  background: rgba(76, 175, 80, 0.22);
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.08s;
+}
+.match-btn:hover  { background: rgba(76, 175, 80, 0.45); }
+.match-btn:active { transform: scale(0.97); }
+
+/* Coin flip animation */
+.toss-coin {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 30%, #ffe082, #c9a227 70%);
+  border: 3px solid #a1821f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  font-weight: 900;
+  color: #6d5410;
+}
+.toss-coin.flipping { animation: coin-flip 1.2s ease-in-out; }
+
+@keyframes coin-flip {
+  0%   { transform: rotateX(0)       translateY(0);     }
+  25%  { transform: rotateX(540deg)  translateY(-46px); }
+  50%  { transform: rotateX(1080deg) translateY(0);     }
+  75%  { transform: rotateX(1620deg) translateY(-18px); }
+  100% { transform: rotateX(1800deg) translateY(0);     }
+}
+
+/* Mini scorecard table inside break / result screens */
+.mini-card {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.mini-card caption {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #81c784;
+  padding-bottom: 6px;
+  text-align: left;
+}
+.mini-card th, .mini-card td {
+  padding: 3px 8px;
+  text-align: left;
+  border-bottom: 1px solid rgba(76, 175, 80, 0.18);
+}
+.mini-card td:last-child, .mini-card th:last-child { text-align: right; }
+
+/* Free hit indicator */
+#free-hit-banner {
+  position: fixed;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 152, 0, 0.9);
+  color: #1a1200;
+  font-size: 1.1rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  padding: 8px 26px;
+  border-radius: 999px;
+  z-index: 70;
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+#free-hit-banner.visible { opacity: 1; }

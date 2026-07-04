@@ -24,6 +24,8 @@ export class Scorecard {
   #elEvent;
   #elShotType;
   #elPower;
+  #elTargetRow;
+  #elTarget;
 
   constructor() {
     this.#mount();
@@ -53,6 +55,10 @@ export class Scorecard {
         <span class="sc-label">Power</span>
         <span class="sc-value sc-power" id="sc-power">—</span>
       </div>
+      <div class="sc-row" id="sc-target-row" style="display:none">
+        <span class="sc-label">Target</span>
+        <span class="sc-value" id="sc-target">—</span>
+      </div>
       <div id="sc-event" class="sc-event"></div>
     `;
     document.body.appendChild(el);
@@ -64,6 +70,42 @@ export class Scorecard {
     this.#elEvent        = el.querySelector('#sc-event');
     this.#elShotType     = el.querySelector('#sc-shot');
     this.#elPower        = el.querySelector('#sc-power');
+    this.#elTargetRow    = el.querySelector('#sc-target-row');
+    this.#elTarget       = el.querySelector('#sc-target');
+  }
+
+  /**
+   * Sync the display from a CricketRules state snapshot.
+   * Used by the rules-engine match flow (replaces internal counting).
+   * @param {object} state — CricketRules.getState() result
+   */
+  syncState(state) {
+    this.#runs    = state.runs;
+    this.#wickets = state.wickets;
+    this.#balls   = state.overs * 6 + state.balls;
+
+    this.#elTotal.textContent = `${state.runs}/${state.wickets}`;
+    this.#elOver.textContent  = `${state.overs}.${state.balls} / ${state.totalOvers ?? this.#totalOvers}`;
+    if (state.striker) {
+      this.#elBatsmanScore.textContent = `${state.striker.runs} (${state.striker.balls})`;
+      this.#elBatsmanName.textContent  = `${this.#batsmanName} #${(state.striker.index ?? 0) + 1}`;
+    }
+
+    if (state.target !== null && state.target !== undefined) {
+      this.#elTargetRow.style.display = '';
+      this.#elTarget.textContent = `${state.target} (need ${state.requiredRuns})`;
+    } else {
+      this.#elTargetRow.style.display = 'none';
+    }
+  }
+
+  /**
+   * Flash a large outcome label (public wrapper for the rules-engine flow).
+   * @param {string} text
+   * @param {string} cls  colour theme: 'six'|'four'|'wicket'|'single'|'dot'
+   */
+  flashEvent(text, cls) {
+    this.#flash(text, cls);
   }
 
   /**

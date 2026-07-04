@@ -30,6 +30,7 @@ import {
 import Stadium      from './scene/Stadium.js';
 import { StickFigure }  from './characters/StickFigure.js';
 import AnimationController from './characters/AnimationController.js';
+import { BatLoader } from './characters/BatLoader.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -231,6 +232,17 @@ export class GameEngine {
   // First-person bat HUD (parented to camera)
   #batHUD;
 
+  // GLB bat (cricket_batsports.glb) — replaces primitive bat geometry
+  #batLoader      = new BatLoader();
+  #batHUDModel    = null;   // clone shown in first-person view
+  #batsmanBatModel = null;  // clone attached to the third-person batsman
+
+  // AI shot queued for the current delivery (second innings visuals)
+  #aiShotPending = null;
+
+  // Cached fielder wrapper objects for FielderAI
+  #fielderWrappers = null;
+
   // Batsman (hidden in FP view)
   #batsmanGroup;
   #batGroup;
@@ -352,11 +364,28 @@ export class GameEngine {
   /** Cycle to next camera view. Returns the view name. */
   cycleView() {
     this.#currentView = (this.#currentView + 1) % this.#cameraViews.length;
-    const v = this.#cameraViews[this.#currentView];
+    return this.#applyView(this.#currentView);
+  }
+
+  #applyView(index) {
+    const v = this.#cameraViews[index];
     this.#camera.position.set(...v.pos);
     this.#camera.lookAt(...v.look);
     this.#batHUD.visible = v.batHUD;
+    // Third-person batsman is visible in every view except first-person POV
+    this.#batsmanGroup.visible = !v.batHUD;
     return v.name;
+  }
+
+  /**
+   * Briefly cut to the Broadcast camera (replay feel), then restore the
+   * current view. Used for sixes and wickets.
+   */
+  flashReplayView(durationMs = 2200) {
+    const broadcastIndex = this.#cameraViews.findIndex(v => v.name === 'Broadcast');
+    if (broadcastIndex < 0 || broadcastIndex === this.#currentView) return;
+    this.#applyView(broadcastIndex);
+    setTimeout(() => this.#applyView(this.#currentView), durationMs);
   }
 
   // ── Scene construction ────────────────────────────────────────────────────
@@ -512,11 +541,85 @@ export class GameEngine {
     }
   }
 
+  // ── GLB bat model ─────────────────────────────────────────────────────────
+
+  /**
+   * Load cricket_batsports.glb and replace ALL primitive bat geometry:
+   *   - the first-person bat HUD meshes (parented to camera)
+   *   - the third-person batsman's box/cylinder bat
+   * Falls back silently to the primitive bats if the GLB fails to load.
+   */
+  async loadBatModel() {
+    try {
+      const source = await this.#batLoader.load();
+
+      // ── First-person HUD bat ─────────────────────────────────────────────
+      const hudClone = source.clone(true);
+      hudClone.traverse((child) => {
+        if (child.isMesh) {
+          child.material = child.material.clone();
+          child.material.depthTest = false;   // HUD renders over the scene
+          child.renderOrder = 999;
+        }
+      });
+      // Remove procedural grip/handle/blade meshes, keep group transform
+      while (this.#batHUD.children.length) this.#batHUD.remove(this.#batHUD.children[0]);
+      this.#batHUD.add(hudClone);
+
+      // ── Third-person batsman bat ─────────────────────────────────────────
+      const batsmanClone = source.clone(true);
+      while (this.#batGroup.children.length) this.#batGroup.remove(this.#batGroup.children[0]);
+      this.#batsmanBatModel = batsmanClone;
+      this.#batLoader.attachToHand(batsmanClone, this.#batGroup, this.#handedness !== 'left');
+
+      console.log('[engine] GLB bat model loaded and attached');
+      return true;
+    } catch (err) {
+      console.warn('[engine] Bat GLB failed to load — using primitive bat:', err);
+      return false;
+    }
+  }
+
+  /** BatLoader instance — exposed for orientation mirroring from main.js. */
+  get batLoader() { return this.#batLoader; }
+
+  /** The GLB bat attached to the third-person batsman (null until loaded). */
+  get batsmanBatModel() { return this.#batsmanBatModel; }
+
+  // ── Public accessors for match systems (umpire / fielders / stadium) ─────
+
+  /** Umpire StickFigure (for UmpireController). */
+  get umpireFigure() { return this.#umpireFigure; }
+
+  /** Stadium instance (stumps explode, confetti, …). */
+  get stadiumRef() { return this.#stadium; }
+
+  /**
+   * Fielder wrappers for FielderAI: [{ figure, position: {x,z}, name }].
+   * Positions reflect the CURRENT world position of each figure.
+   */
+  get fielderRefs() {
+    if (!this.#fielderWrappers) {
+      const names = ['mid-off', 'mid-on', 'cover point', 'mid-wicket',
+                     'third man', 'fine leg', 'long off', 'long on'];
+      this.#fielderWrappers = this.#fielderFigures.map((fig, i) => ({
+        figure: fig,
+        position: { x: fig.group.position.x, z: fig.group.position.z },
+        name: names[i] ?? `fielder ${i + 1}`,
+      }));
+    }
+    return this.#fielderWrappers;
+  }
+
   // ── Delivery ──────────────────────────────────────────────────────────────
 
   /** @param {'right'|'left'} hand */
   setHandedness(hand) {
     this.#handedness = hand;
+    // Re-attach the GLB bat with the mirrored grip lean
+    if (this.#batsmanBatModel) {
+      this.#batLoader.attachToHand(this.#batsmanBatModel, this.#batGroup, hand !== 'left');
+    }
   }
 
   deliveryStart(type = 'pace', lineOffset = 0) {
@@ -534,6 +637,7 @@ export class GameEngine {
     this.#swingDetected     = false;
     this.#swingActive       = false;
     this.#hitWindow.open    = false;
+    this.#aiShotPending     = null;
     clearTimeout(this.#windowTimer);
 
     const bg = this.#bowlerFigure.group;
@@ -618,6 +722,90 @@ export class GameEngine {
     const lofted    = (beta ?? 0) < LOFT_BETA_DEG;
 
     return this.launchBall(direction, power, shotType, lofted);
+  }
+
+  /**
+   * New classifier pipeline: consume the hit window WITHOUT launching the
+   * ball. Returns the timing offset in ms (negative = early, positive =
+   * late) if the swing landed inside the window, or null otherwise.
+   *
+   * The caller classifies the shot, asks CricketRules for the outcome, then
+   * calls playClassifiedShot() so the visual matches the scored result.
+   */
+  consumeHitWindow() {
+    if (!this.#hitWindow.open || this.#swingDetected) return null;
+    const now = performance.now();
+    if (now < this.#hitWindow.openAt || now > this.#hitWindow.closeAt) return null;
+
+    this.#swingDetected  = true;
+    this.#hitWindow.open = false;
+    clearTimeout(this.#windowTimer);
+    return now - this.#hitWindow.arrivalTime;
+  }
+
+  /**
+   * Animate the ball flight for an outcome already decided by CricketRules,
+   * so the visual always matches the score.
+   *
+   * @param {object} p
+   * @param {number} p.dirX     world X direction (-1 leg … +1 off, unit-ish)
+   * @param {number} p.dirZ     world Z direction (negative = toward bowler)
+   * @param {number} p.runs     runs scored (0/1/2/3/4/6)
+   * @param {boolean} [p.lofted]
+   * @param {boolean} [p.caught]  ball carries to a catcher
+   * @param {number} [p.power]
+   * @returns {{ landingX: number, landingZ: number }}
+   */
+  playClassifiedShot({ dirX, dirZ, runs, lofted = false, caught = false, power = 50 }) {
+    if (!this.#ballMesh.visible) return null;
+
+    // Distance chosen from the scored outcome — boundaries clear the rope.
+    let distance;
+    if (caught)         distance = 12 + Math.random() * 6;
+    else if (runs >= 6) distance = BOUNDARY_DIST + 12;
+    else if (runs === 4) distance = BOUNDARY_DIST + 4;
+    else if (runs === 3) distance = 24;
+    else if (runs === 2) distance = 17;
+    else if (runs === 1) distance = 10;
+    else                 distance = 4 + (power / 100) * 4;
+
+    // Arc height: sixes fly, fours skim, ground shots stay low.
+    let arcMax;
+    if (runs >= 6)      arcMax = 8 + (power / 100) * 6;
+    else if (caught)     arcMax = 5;
+    else if (lofted)     arcMax = 4;
+    else if (runs === 4) arcMax = 1.2;
+    else                 arcMax = 0.4 + (power / 100) * 0.5;
+
+    // Normalize lateral/forward mix
+    const len = Math.max(0.001, Math.sqrt(dirX * dirX + dirZ * dirZ));
+    const nx = dirX / len;
+    const nz = dirZ / len;
+
+    const startPos = this.#ballMesh.position.clone();
+    const endX = nx * distance;
+    const endZ = startPos.z + nz * distance;
+
+    const mid1 = new Vector3(endX * 0.3, arcMax * 0.9, startPos.z + (endZ - startPos.z) * 0.3);
+    const mid2 = new Vector3(endX * 0.7, arcMax * 0.45, startPos.z + (endZ - startPos.z) * 0.65);
+    const end  = new Vector3(endX, caught ? 0.6 : 0.04, endZ);
+
+    this.#shotCurve      = new CatmullRomCurve3([startPos, mid1, mid2, end]);
+    this.#shotStartMs    = performance.now();
+    this.#shotDurationMs = Math.min(1400, Math.max(400, 500 + distance * 22 - power * 2));
+    this.#state          = 'SHOT_PLAYING';
+    this.#swingDetected  = true;
+
+    return { landingX: endX, landingZ: endZ };
+  }
+
+  /**
+   * Queue an AI shot for the current delivery (second innings). Executed
+   * automatically just before the ball reaches the crease. Pass null params
+   * to let the ball go through (AI plays and misses / is bowled).
+   */
+  queueAIShot(params) {
+    this.#aiShotPending = params;
   }
 
   /**
@@ -1121,6 +1309,14 @@ export class GameEngine {
     const t = Math.min((now - this.#ballStartMs) / this.#ballDurationMs, 1);
     this.#ballMesh.position.copy(this.#deliveryCurve.getPoint(t));
     this.#ballMesh.rotation.x += 0.18;
+
+    // AI batting (second innings): play the queued shot just before arrival.
+    if (this.#aiShotPending && t >= 0.96) {
+      const params = this.#aiShotPending;
+      this.#aiShotPending = null;
+      this.playClassifiedShot(params);
+      return;
+    }
 
     if (t >= 1) {
       this.#hitWindow.open = false;
