@@ -206,7 +206,7 @@ io.on('connection', (socket) => {
   socket.on('motion',         (data) => onRelay(socket, 'motion',         data));
   socket.on('swing',          (data) => onRelay(socket, 'swing',          data));
   socket.on('swing-binary',   (data) => onRelay(socket, 'swing-binary',   data));
-  socket.on('orientation',    (data) => onRelay(socket, 'orientation',    data));
+  socket.on('bat_motion',     (data) => onRelay(socket, 'bat_motion',     data));
   socket.on('set_handedness', (data) => onRelay(socket, 'set_handedness', data));
   // Desktop → mobile
   socket.on('game-event',     (data) => onRelay(socket, 'game-event',     data));

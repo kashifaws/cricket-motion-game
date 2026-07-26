@@ -1,34 +1,47 @@
 // motion.js — Device motion capture, state-machine swing detection, and socket relay.
+//
+// Orientation is tracked end-to-end as quaternions (see orientation.js). Raw
+// alpha/beta/gamma numbers are only ever read out of a quaternion at the
+// moment they're needed (calibration snapshot, swing-peak snapshot) — never
+// diffed or interpolated as independent Euler numbers, since that doesn't
+// compose correctly for combined rotations.
+
+import { Quaternion, Euler, MathUtils } from 'three';
+import { deviceOrientationToQuaternion, getScreenOrientationAngle } from './orientation.js';
 
 const G = 9.81;
 
-// Raw orientation kept current by deviceorientation listener
-const _raw = { alpha: 0, beta: 0, gamma: 0 };
+// ── Quaternion orientation state ────────────────────────────────────────────
 
-// Calibration baseline
-const _baseline = { alpha: 0, beta: 0, gamma: 0 };
-let _calibrated  = true;   // start calibrated; user can recalibrate
+// Live device quaternion, updated on every 'deviceorientation' event.
+const _liveQuaternion = new Quaternion();
+// Inverse of the device quaternion captured at calibration ("ready stance").
+const _referenceQuaternion = new Quaternion();
+// referenceQuaternion * liveQuaternion — how far the phone has moved from stance.
+const _relativeQuaternion = new Quaternion();
+const _decomposeEuler = new Euler();
+
+let _calibrated = false;
 let _handedness  = 'right'; // 'right' | 'left'
 let _listening   = false;
 let _socket      = null;
 let _debugCb     = null;   // (mag, state, sent, calls) → void
 let _callCount   = 0;
+let _streamTimer = null;
 
 // ── State machine ────────────────────────────────────────────────────────────
 
 const S = { IDLE: 'IDLE', LOADING: 'LOADING', SWINGING: 'SWINGING', FOLLOWTHROUGH: 'FOLLOWTHROUGH' };
 let _state = S.IDLE;
 let _swingFrames = [];
-let _peakMag = 0;
-let _peakFrame = null;
+let _peakMag = 0;          // peak accelerometer G-force (drives power)
+let _peakAngSpeed = 0;      // peak gyroscope angular speed (drives swing-peak instant)
+let _peakAngFrame = null;   // frame captured at peak angular speed
+let _peakMagFrame = null;   // frame captured at peak accel — fallback if no gyro
 let _consecutiveHigh = 0;
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Snapshot the current raw orientation as the calibration baseline.
- * Call this while the user is standing in their batting stance.
- */
 /** Register a callback that receives live { mag, state, sent, calls } for the debug bar. */
 export function setDebugCallback(cb) { _debugCb = cb; }
 
@@ -63,20 +76,37 @@ export function emitSwing(power = 65, shotType = 'DRIVE') {
   window.dispatchEvent(new CustomEvent('swing-detected', { detail: payload }));
 }
 
+/**
+ * Snapshot the current live device quaternion as the calibration baseline
+ * ("ready stance"). Everything downstream is expressed relative to this.
+ */
 export function captureBaseline() {
-  _baseline.alpha = _raw.alpha;
-  _baseline.beta  = _raw.beta;
-  _baseline.gamma = _raw.gamma;
+  _referenceQuaternion.copy(_liveQuaternion).invert();
   _calibrated = true;
-  console.log('[motion] captureBaseline →', _baseline);
+  console.log('[motion] captureBaseline — reference quaternion set');
 }
 
 /**
- * Extract relative axes from a DeviceMotionEvent against the stored baseline.
- * @param {DeviceMotionEvent} event
- * @returns {{ rAlpha, rBeta, rGamma, ax, ay, az, gx, gy, gz }}
+ * Request iOS 13+ motion/orientation permission. MUST be called from within
+ * a user gesture handler (e.g. a button tap), not on page load, or iOS
+ * Safari silently rejects it.
+ * @returns {Promise<boolean>} true if granted (or not required, e.g. Android).
  */
-export function getRelative(event) {
+export async function requestOrientationPermission() {
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    const result = await DeviceOrientationEvent.requestPermission();
+    return result === 'granted';
+  }
+  return true; // Android / non-iOS — no permission gate exists.
+}
+
+/**
+ * Extract linear-acceleration + gyroscope readings from a DeviceMotionEvent,
+ * plus a snapshot of the current relative orientation quaternion.
+ * @param {DeviceMotionEvent} event
+ */
+function sampleMotion(event) {
   const a = event.accelerationIncludingGravity ?? event.acceleration ?? {};
   const r = event.rotationRate ?? {};
 
@@ -87,11 +117,10 @@ export function getRelative(event) {
   const gy = r.beta  ?? 0;
   const gz = r.gamma ?? 0;
 
-  const rAlpha = _raw.alpha - _baseline.alpha;
-  const rBeta  = _raw.beta  - _baseline.beta;
-  const rGamma = _raw.gamma - _baseline.gamma;
+  const mag      = Math.sqrt(ax * ax + ay * ay + az * az);
+  const angSpeed = Math.sqrt(gx * gx + gy * gy + gz * gz);
 
-  return { rAlpha, rBeta, rGamma, ax, ay, az, gx, gy, gz };
+  return { ax, ay, az, gx, gy, gz, mag, angSpeed };
 }
 
 /**
@@ -114,8 +143,12 @@ export function calculatePower(peakMagnitude) {
  *   rGamma: positive = phone tilted to the RIGHT from calibration pose
  *   rBeta:  negative = phone tilted FORWARD (bent-knee sweep position)
  *
- * @param {number} rGamma  — relative gamma tilt (°) from calibration
- * @param {number} rBeta   — relative beta tilt (°) from calibration
+ * rGamma/rBeta are read out of the relative orientation quaternion at the
+ * detected swing-peak instant (see detectSwing) — never accumulated or
+ * interpolated as raw Euler numbers.
+ *
+ * @param {number} rGamma  — relative roll (°) from calibration, at swing peak
+ * @param {number} rBeta   — relative pitch (°) from calibration, at swing peak
  * @param {number} ax      — peak-frame x acceleration (G units)
  * @param {number} ay      — peak-frame y acceleration (G units)
  * @param {number} az      — peak-frame z acceleration (G units)
@@ -167,15 +200,18 @@ export function classifyShot(rGamma, rBeta, ax, ay, az, power, handedness = 'rig
 
 /**
  * Run the 4-state swing detector against a DeviceMotionEvent.
- * Emits via socket and fires a DOM CustomEvent on completion.
+ * The swing lifecycle (IDLE→LOADING→SWINGING→FOLLOWTHROUGH) is still driven
+ * by accelerometer magnitude, but the orientation SAMPLE used for shot
+ * classification is taken at the peak of gyroscope angular speed — the
+ * actual swing/impact instant — rather than at the peak of acceleration or
+ * some arbitrary later moment.
  * @param {DeviceMotionEvent} motionEvent
  */
 export function detectSwing(motionEvent) {
   if (!_calibrated) return;
 
-  const { rAlpha, rBeta, rGamma, ax, ay, az, gx, gy, gz } = getRelative(motionEvent);
-  const mag = Math.sqrt(ax * ax + ay * ay + az * az);
-  const ts  = Date.now();
+  const { ax, ay, az, gx, gy, gz, mag, angSpeed } = sampleMotion(motionEvent);
+  const ts = Date.now();
 
   _callCount++;
   _debugCb?.({ mag, state: _state, sent: false, calls: _callCount });
@@ -189,7 +225,9 @@ export function detectSwing(motionEvent) {
           _state = S.LOADING;
           _swingFrames = [];
           _peakMag = 0;
-          _peakFrame = null;
+          _peakAngSpeed = 0;
+          _peakAngFrame = null;
+          _peakMagFrame = null;
           _consecutiveHigh = 0;
           console.log('[motion] IDLE → LOADING');
         }
@@ -210,28 +248,39 @@ export function detectSwing(motionEvent) {
       break;
 
     case S.SWINGING: {
-      const frame = { mag, ax, ay, az, gx, gy, gz, rAlpha, rBeta, rGamma, ts };
+      const frame = { mag, angSpeed, ax, ay, az, quaternion: _relativeQuaternion.clone(), ts };
       _swingFrames.push(frame);
       if (mag > _peakMag) {
-        _peakMag  = mag;
-        _peakFrame = frame;
+        _peakMag = mag;
+        _peakMagFrame = frame;
+      }
+      if (angSpeed > _peakAngSpeed) {
+        _peakAngSpeed = angSpeed;
+        _peakAngFrame = frame;
       }
       if (mag < 1.1) {
         _state = S.FOLLOWTHROUGH;
-        console.log('[motion] SWINGING → FOLLOWTHROUGH, peakMag=', _peakMag.toFixed(2));
+        console.log('[motion] SWINGING → FOLLOWTHROUGH, peakMag=%s peakAngSpeed=%s',
+          _peakMag.toFixed(2), _peakAngSpeed.toFixed(1));
       }
       break;
     }
 
     case S.FOLLOWTHROUGH: {
-      const peak = _peakFrame ?? _swingFrames[0] ?? {};
+      // Prefer the gyroscope-peak instant (the actual swing/impact moment);
+      // fall back to the accel-peak frame on devices with no rotationRate.
+      const peak = _peakAngFrame ?? _peakMagFrame ?? _swingFrames[0] ?? {};
+      const peakQuaternion = peak.quaternion ?? _relativeQuaternion;
+
+      _decomposeEuler.setFromQuaternion(peakQuaternion, 'YXZ');
+      const relAlpha = MathUtils.radToDeg(_decomposeEuler.y);  // yaw
+      const relBeta  = MathUtils.radToDeg(_decomposeEuler.x);  // pitch
+      const relGamma = MathUtils.radToDeg(_decomposeEuler.z);  // roll
+
       const power    = calculatePower(_peakMag);
       const shotType = classifyShot(
-        peak.rGamma ?? 0,
-        peak.rBeta  ?? 0,
-        peak.ax     ?? 0,
-        peak.ay     ?? 0,
-        peak.az     ?? 0,
+        relGamma, relBeta,
+        peak.ax ?? 0, peak.ay ?? 0, peak.az ?? 0,
         power,
         _handedness,
       );
@@ -254,23 +303,17 @@ export function detectSwing(motionEvent) {
         quality > 60 ? 'GOOD'    :
         quality > 40 ? 'MISTIMED': 'EDGED';
 
-      // Total gyro magnitude at the peak frame — used by the desktop
-      // ShotClassifier to detect wrist-snap shots (helicopter).
-      const rotMag = Math.sqrt(
-        (peak.gx ?? 0) ** 2 + (peak.gy ?? 0) ** 2 + (peak.gz ?? 0) ** 2,
-      );
-
       const payload = {
         power,
         shotType,
         quality,
         qualityLabel,
         peakMag: _peakMag,
-        rotMag,
+        rotMag: _peakAngSpeed, // total gyro magnitude at the swing peak — feeds desktop's helicopter gate
         swingDuration,
-        alpha: peak.rAlpha ?? 0,
-        beta:  peak.rBeta  ?? 0,
-        gamma: peak.rGamma ?? 0,
+        alpha: relAlpha,
+        beta:  relBeta,
+        gamma: relGamma,
         ax: peak.ax ?? 0,
         ay: peak.ay ?? 0,
         az: peak.az ?? 0,
@@ -299,7 +342,9 @@ export function detectSwing(motionEvent) {
       _state = S.IDLE;
       _swingFrames = [];
       _peakMag = 0;
-      _peakFrame = null;
+      _peakAngSpeed = 0;
+      _peakAngFrame = null;
+      _peakMagFrame = null;
       _consecutiveHigh = 0;
       break;
     }
@@ -348,7 +393,10 @@ function _onTouchEnd(e) {
 
 /**
  * Request motion permissions (iOS gate), attach listeners, and start sending
- * raw orientation to the desktop at 30 Hz.
+ * the relative orientation quaternion to the desktop at 30 Hz.
+ *
+ * Must be invoked from within a user-gesture handler on iOS — this is always
+ * called from the "I'm ready" tap in main.js, so that requirement is met.
  *
  * @param {import('socket.io-client').Socket} socket
  * @param {string} roomId
@@ -362,9 +410,16 @@ export async function startListening(socket, roomId) {
   window.addEventListener('touchstart', _onTouchStart, { passive: true });
   window.addEventListener('touchend',   _onTouchEnd,   { passive: true });
 
-  // ── DeviceMotion — only works on HTTPS non-localhost or iOS with permission ─
+  // ── DeviceOrientation / DeviceMotion — need explicit iOS permission ───────
+  // Both permissions are requested and checked explicitly — a silent
+  // rejection here must not be swallowed, or the game falls back to
+  // swipe-only mode with no explanation, which looks like a hang.
+  let orientationGranted = false;
   let motionGranted = false;
+
   try {
+    orientationGranted = await requestOrientationPermission();
+
     if (
       typeof DeviceMotionEvent !== 'undefined' &&
       typeof DeviceMotionEvent.requestPermission === 'function'
@@ -372,41 +427,45 @@ export async function startListening(socket, roomId) {
       const state = await DeviceMotionEvent.requestPermission();
       motionGranted = state === 'granted';
     } else if (typeof DeviceMotionEvent !== 'undefined') {
-      // Android/desktop — try attaching; if events never fire the swipe path handles it.
-      motionGranted = true;
+      motionGranted = true; // Android/desktop — no permission gate exists.
     }
+
+    if (!orientationGranted) {
+      throw new Error('Device orientation permission denied — enable Motion & Orientation Access in Settings.');
+    }
+
+    window.addEventListener('deviceorientation', (e) => {
+      if (e.alpha === null) return; // some browsers fire null events before real data
+      deviceOrientationToQuaternion(
+        e.alpha, e.beta, e.gamma,
+        getScreenOrientationAngle(),
+        _liveQuaternion,
+      );
+      _relativeQuaternion.copy(_referenceQuaternion).multiply(_liveQuaternion);
+    }, { passive: true });
 
     if (motionGranted) {
-      if (
-        typeof DeviceOrientationEvent !== 'undefined' &&
-        typeof DeviceOrientationEvent.requestPermission === 'function'
-      ) {
-        await DeviceOrientationEvent.requestPermission().catch(() => {});
-      }
-
-      window.addEventListener('deviceorientation', (e) => {
-        _raw.alpha = e.alpha ?? 0;
-        _raw.beta  = e.beta  ?? 0;
-        _raw.gamma = e.gamma ?? 0;
-      }, { passive: true });
-
       window.addEventListener('devicemotion', detectSwing, { passive: true });
-
-      setTimeout(() => { if (!_calibrated) captureBaseline(); }, 600);
-
-      // Stream bat-angle to desktop at 30 Hz.
-      setInterval(() => {
-        socket.emit('orientation', {
-          alpha: _raw.alpha - _baseline.alpha,
-          beta:  _raw.beta  - _baseline.beta,
-          gamma: _raw.gamma - _baseline.gamma,
-        });
-      }, 1000 / 30);
+    } else {
+      console.warn('[motion] DeviceMotion permission denied — swing detection falls back to swipe.');
     }
+
+    setTimeout(() => { if (!_calibrated) captureBaseline(); }, 600);
+
+    // Stream the relative orientation quaternion to the desktop at 30 Hz —
+    // drives the live bat mirror between deliveries. [x, y, z, w].
+    _streamTimer = setInterval(() => {
+      if (!_calibrated) return;
+      socket.emit('bat_motion', { q: _relativeQuaternion.toArray() });
+    }, 1000 / 30);
   } catch (err) {
-    console.warn('[motion] DeviceMotion unavailable, swipe-only mode:', err.message);
+    console.warn('[motion] Orientation/motion unavailable, swipe-only mode:', err.message);
+    throw err;
   }
 
   _listening = true;
-  console.log('[motion] startListening — swipe=%s motion=%s roomId=%s', true, motionGranted, roomId);
+  console.log('[motion] startListening — swipe=%s orientation=%s motion=%s roomId=%s',
+    true, orientationGranted, motionGranted, roomId);
+
+  return { orientationGranted, motionGranted };
 }

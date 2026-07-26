@@ -411,9 +411,10 @@ socket.on('swing', (data) => {
   }, data.shotType ?? 'DRIVE');
 });
 
-/** Raw 30 Hz orientation stream — mirrors phone tilt onto the bat. */
-socket.on('orientation', ({ beta, gamma }) => {
-  engine?.updateBatAngle(beta, gamma);
+/** Relative-to-calibration quaternion stream (30 Hz) — mirrors phone tilt onto the bat. */
+socket.on('bat_motion', ({ q }) => {
+  if (!Array.isArray(q) || q.length !== 4) return;
+  engine?.setBatTargetQuaternion(q[0], q[1], q[2], q[3]);
 });
 
 socket.on('peer-disconnected', () => {
@@ -590,14 +591,9 @@ function handleSwing(swingData, legacyShotType) {
 
   if (shotResult.shot !== 'none') sounds.crack(swingData.power);
 
-  // Mirror the phone's exact orientation onto the GLB bat during follow-through
-  if (engine.batsmanBatModel) {
-    engine.batLoader.mirrorPhoneOrientation(
-      engine.batsmanBatModel,
-      swingData.alpha, swingData.beta, swingData.gamma,
-      selectedHand === 'right',
-    );
-  }
+  // The batsman's GLB bat already tracks the phone's live orientation every
+  // frame via quaternion SLERP (engine.js #update) — no follow-through
+  // snapshot needed here.
 
   // 6. Process the delivery through the rules engine
   const { events, state } = rules.processDelivery(outcome);
@@ -837,5 +833,13 @@ window.addEventListener('keydown', (e) => {
       alpha: 0, beta: 10, gamma: 0,
       peakMag: 4.2, power: 55, rotMag: 2, swingDuration: 140,
     }, 'DRIVE');
+  }
+
+  // G — toggle the axis-verification gizmo (see testing checklist: rotate
+  // the phone around one axis at a time and confirm it moves the expected
+  // Three.js axis in the expected direction).
+  if (e.key === 'g' || e.key === 'G') {
+    const on = engine?.toggleAxisDebugGizmo();
+    showCameraBadge(on ? 'Axis gizmo ON' : 'Axis gizmo OFF');
   }
 });

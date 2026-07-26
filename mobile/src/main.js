@@ -24,6 +24,12 @@ function getRoomId() {
 }
 
 async function boot() {
+  // Best-effort — not supported on iOS Safari, and rejection there is
+  // expected, not an error. The orientation math above is screen-angle-aware
+  // regardless, so an unlocked screen degrades gracefully rather than
+  // inverting controls.
+  screen.orientation?.lock?.('portrait').catch(() => {});
+
   const roomId = getRoomId();
   const ui = mountUI();
   const wakeLock = new WakeLock();
@@ -87,14 +93,19 @@ async function boot() {
     console.log('[main] handedness set to', hand);
   });
 
-  // "I'm ready" tap → request iOS motion permission → jump straight to HUD.
+  // "I'm ready" tap → request iOS orientation/motion permission → jump straight to HUD.
+  // This MUST run inside the tap handler (not on load) — iOS only grants the
+  // permission prompt from within a user-gesture call stack.
   // Auto-calibration fires 600 ms after startListening (see motion.js).
   ui.onReady(async () => {
     try {
       setDebugCallback(({ mag, state, sent }) => ui.updateDebug({ mag, state, sent }));
-      await startListening(socket, roomId);
+      const { motionGranted } = await startListening(socket, roomId);
       ui.goToScreen(4);   // skip manual calibration — auto-calibrate handles it
       wakeLock.request(); // keep the screen on while batting — no tap needed
+      if (!motionGranted) {
+        ui.showToast('Accelerometer blocked — swipe/tap to play shots');
+      }
     } catch (err) {
       ui.goToScreen(1);
       ui.setStatus(`Motion permission denied: ${err.message}`);

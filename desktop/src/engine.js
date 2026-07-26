@@ -23,7 +23,7 @@ import {
   Scene, PerspectiveCamera, WebGLRenderer,
   BoxGeometry, SphereGeometry, CylinderGeometry, EdgesGeometry,
   MeshLambertMaterial, LineBasicMaterial,
-  Mesh, LineSegments, Group,
+  Mesh, LineSegments, Group, AxesHelper, Euler,
   SpriteMaterial, Sprite, CanvasTexture,
   Color, Vector3, CatmullRomCurve3, MathUtils,
 } from 'three';
@@ -31,6 +31,7 @@ import Stadium      from './scene/Stadium.js';
 import { StickFigure }  from './characters/StickFigure.js';
 import AnimationController from './characters/AnimationController.js';
 import { BatLoader } from './characters/BatLoader.js';
+import { OrientationTracker } from './characters/OrientationTracker.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -236,6 +237,12 @@ export class GameEngine {
   #batLoader      = new BatLoader();
   #batHUDModel    = null;   // clone shown in first-person view
   #batsmanBatModel = null;  // clone attached to the third-person batsman
+
+  // Live phone-orientation tracking — quaternion SLERP, composed with each
+  // bat's fixed grip rest pose. Fed by 'bat_motion' socket events.
+  #batHUDOrientation    = new OrientationTracker();
+  #batsmanOrientation   = new OrientationTracker();
+  #axisDebugGizmo       = null;   // AxesHelper mirroring the raw relative quaternion
 
   // AI shot queued for the current delivery (second innings visuals)
   #aiShotPending = null;
@@ -505,6 +512,7 @@ export class GameEngine {
     this.#batHUD.position.set(0.40, -0.30, -1.80);
     this.#batHUD.rotation.set(0.20, 0.02, -0.14);
     this.#batHUD.scale.setScalar(0.75);
+    this.#batHUDOrientation.setBaseFromEuler(new Euler(0.20, 0.02, -0.14));
 
     this.#camera.add(this.#batHUD);
   }
@@ -571,6 +579,8 @@ export class GameEngine {
       while (this.#batGroup.children.length) this.#batGroup.remove(this.#batGroup.children[0]);
       this.#batsmanBatModel = batsmanClone;
       this.#batLoader.attachToHand(batsmanClone, this.#batGroup, this.#handedness !== 'left');
+      this.#batsmanOrientation.setBaseFromEuler(this.#batLoader.getRestEuler(this.#handedness !== 'left'));
+      this.#batsmanOrientation.reset();
 
       console.log('[engine] GLB bat model loaded and attached');
       return true;
@@ -619,7 +629,38 @@ export class GameEngine {
     // Re-attach the GLB bat with the mirrored grip lean
     if (this.#batsmanBatModel) {
       this.#batLoader.attachToHand(this.#batsmanBatModel, this.#batGroup, hand !== 'left');
+      this.#batsmanOrientation.setBaseFromEuler(this.#batLoader.getRestEuler(hand !== 'left'));
+      this.#batsmanOrientation.reset();
     }
+  }
+
+  /**
+   * Latest relative-to-calibration quaternion from the phone, as [x,y,z,w].
+   * Drives the live bat mirror (both first-person HUD and third-person
+   * batsman bat) via SLERP in #update — never applied as raw Euler angles.
+   */
+  setBatTargetQuaternion(x, y, z, w) {
+    this.#batHUDOrientation.setTarget(x, y, z, w);
+    this.#batsmanOrientation.setTarget(x, y, z, w);
+  }
+
+  /**
+   * Toggle the axis-verification gizmo: three colored axes mirroring the
+   * RAW smoothed relative quaternion (no grip-pose offset, no other game
+   * logic) so yaw/pitch/roll can be checked empirically one axis at a time.
+   * See the testing checklist — verify on both Android and iOS before
+   * trusting shot-side (leg/off) classification.
+   */
+  toggleAxisDebugGizmo() {
+    if (this.#axisDebugGizmo) {
+      this.#scene.remove(this.#axisDebugGizmo);
+      this.#axisDebugGizmo = null;
+      return false;
+    }
+    this.#axisDebugGizmo = new AxesHelper(1.2);
+    this.#axisDebugGizmo.position.set(0, 2, 3);
+    this.#scene.add(this.#axisDebugGizmo);
+    return true;
   }
 
   deliveryStart(type = 'pace', lineOffset = 0) {
@@ -1127,15 +1168,6 @@ export class GameEngine {
     }
   }
 
-  // ── Bat angle mirror ──────────────────────────────────────────────────────
-
-  updateBatAngle(rBeta, rGamma) {
-    if (this.#tweens.busy) return;
-    const DEG = MathUtils.DEG2RAD;
-    this.#batHUD.rotation.x = 0.20 + MathUtils.clamp(rBeta  * DEG * 0.7, -Math.PI / 3, Math.PI / 3);
-    this.#batHUD.rotation.z = -0.14 + MathUtils.clamp(rGamma * DEG * 0.5, -Math.PI / 4, Math.PI / 4);
-  }
-
   // ── Power popup sprite ────────────────────────────────────────────────────
 
   #showSwingFeedback(power, shotType) {
@@ -1245,6 +1277,18 @@ export class GameEngine {
     this.#stepShake();
     this.#stadium?.update(delta);
     this.#umpireAnim?.update(delta);
+
+    // Live bat mirror — quaternion SLERP only, never Euler LERP. Skipped
+    // while a canned swing animation tween owns the bat's rotation.
+    if (!this.#tweens.busy) {
+      this.#batHUDOrientation.apply(this.#batHUD, delta);
+      if (this.#batsmanBatModel) this.#batsmanOrientation.apply(this.#batsmanBatModel, delta);
+    }
+    // Debug gizmo mirrors the raw relative quaternion directly — always on,
+    // independent of tweens/game state, so axis verification isn't blocked.
+    if (this.#axisDebugGizmo) {
+      this.#axisDebugGizmo.quaternion.copy(this.#batsmanOrientation.smoothed);
+    }
 
     switch (this.#state) {
       case 'BOWLER_RUNNING': this.#stepBowler(now); break;

@@ -5,6 +5,15 @@
  * All angles are RELATIVE to the calibration baseline (captured in the
  * player's natural stance). Right-handed default; left-handed players have
  * every direction angle mirrored via handSign.
+ *
+ * alpha/beta/gamma here are read out of the relative orientation quaternion
+ * at the detected swing-peak instant (mobile/src/motion.js), decomposed via
+ * Euler 'YXZ' — not raw device alpha/beta/gamma diffs. The gate boundaries
+ * below were tuned against the old (buggy) raw-Euler-diff math; they're left
+ * unchanged here since the quaternion decomposition is the standard,
+ * axis-correct convention and shouldn't need new sign flips — but confirm
+ * this with the desktop axis-debug gizmo (engine.toggleAxisDebugGizmo, 'G'
+ * key) on a real device before trusting these ranges in production.
  */
 
 import { MathUtils } from 'three';

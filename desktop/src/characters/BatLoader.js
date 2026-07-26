@@ -7,11 +7,18 @@
  * naturally around the grip.
  */
 
-import { Box3, MathUtils } from 'three';
+import { Box3, Euler, MathUtils } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import batUrl from '../assets/cricket_batsports.glb?url';
 
 const REGULATION_BAT_LENGTH_M = 0.96;
+
+// Natural grip rest pose (Euler, default 'XYZ' order): slight forward lean,
+// facing the bowler, with a small lean toward the off side. Right-handed
+// values; left-handed mirrors the Z (off-side lean) component.
+const REST_LEAN_X = MathUtils.degToRad(-8);
+const REST_LEAN_Y = MathUtils.degToRad(0);
+const REST_LEAN_Z = MathUtils.degToRad(10);
 
 export class BatLoader {
   constructor() {
@@ -81,48 +88,20 @@ export class BatLoader {
     batModel.removeFromParent?.();
     handBone.add(batModel);
 
-    if (isRightHanded) {
-      batModel.position.set(0.02, -0.08, 0.04);
-      batModel.rotation.set(
-        MathUtils.degToRad(-8),   // slight forward lean (natural stance)
-        MathUtils.degToRad(0),    // face the bowler
-        MathUtils.degToRad(10),   // lean toward off-side
-      );
-    } else {
-      batModel.position.set(-0.02, -0.08, 0.04);
-      batModel.rotation.set(
-        MathUtils.degToRad(-8),
-        MathUtils.degToRad(0),
-        MathUtils.degToRad(-10),
-      );
-    }
+    const restEuler = this.getRestEuler(isRightHanded);
+    batModel.position.set(isRightHanded ? 0.02 : -0.02, -0.08, 0.04);
+    batModel.rotation.copy(restEuler);
   }
 
   /**
-   * Mirror live phone orientation onto the bat between deliveries.
-   * Phone front face = bat face, phone long axis = bat length axis.
-   *
-   * @param {import('three').Object3D} batModel
-   * @param {number} relAlpha  yaw (deg, relative to calibration)
-   * @param {number} relBeta   pitch (deg)
-   * @param {number} relGamma  roll (deg)
+   * The bat's natural grip rest pose. Live orientation tracking (see
+   * OrientationTracker) composes this with the phone's relative rotation —
+   * it is never overwritten directly once live tracking is active.
    * @param {boolean} isRightHanded
+   * @returns {import('three').Euler}
    */
-  mirrorPhoneOrientation(batModel, relAlpha, relBeta, relGamma, isRightHanded) {
-    const sign = isRightHanded ? 1 : -1;
-
-    const alphaRad = MathUtils.degToRad((relAlpha ?? 0) * sign);
-    const betaRad  = MathUtils.degToRad(relBeta ?? 0);
-    const gammaRad = MathUtils.degToRad((relGamma ?? 0) * sign);
-
-    // Clamp to prevent the bat clipping through the body
-    const clampedAlpha = MathUtils.clamp(alphaRad, -Math.PI * 0.7, Math.PI * 0.7);
-    const clampedBeta  = MathUtils.clamp(betaRad,  -Math.PI * 0.6, Math.PI * 0.6);
-    const clampedGamma = MathUtils.clamp(gammaRad, -Math.PI * 0.5, Math.PI * 0.5);
-
-    batModel.rotation.x = MathUtils.lerp(batModel.rotation.x, clampedBeta,  0.25);
-    batModel.rotation.y = MathUtils.lerp(batModel.rotation.y, clampedAlpha, 0.25);
-    batModel.rotation.z = MathUtils.lerp(batModel.rotation.z, clampedGamma, 0.25);
+  getRestEuler(isRightHanded = true) {
+    return new Euler(REST_LEAN_X, REST_LEAN_Y, isRightHanded ? REST_LEAN_Z : -REST_LEAN_Z);
   }
 }
 
